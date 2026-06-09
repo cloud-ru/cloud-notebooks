@@ -89,6 +89,15 @@
         "icon": "$(notebook)"
       },
       {
+        "command": "cloudru.openNotebookFiles",
+        "title": "Cloud.ru: Browse Notebook Files (SSH)",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "cloudru.configureSsh",
+        "title": "Cloud.ru: Configure SSH (key & account)"
+      },
+      {
         "command": "cloudru.openNotebookInBrowser",
         "title": "Cloud.ru: Open Notebook in Browser",
         "icon": "$(link-external)"
@@ -119,9 +128,14 @@
           "group": "inline@1"
         },
         {
+          "command": "cloudru.openNotebookFiles",
+          "when": "view == cloudruNotebooks && viewItem == notebook.running",
+          "group": "inline@2"
+        },
+        {
           "command": "cloudru.openNotebookInBrowser",
           "when": "view == cloudruNotebooks && viewItem =~ /^notebook/",
-          "group": "inline@2"
+          "group": "inline@3"
         }
       ]
     },
@@ -142,6 +156,21 @@
           "type": "boolean",
           "default": true,
           "description": "Verify the notebook server's TLS certificate. The shim trusts the system CA store by default; disable only on isolated networks where verification cannot be satisfied."
+        },
+        "cloudru.ssh.privateKeyPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the ML Space SSH private key (downloaded from the console SSH dialog). Used to browse notebook files over SFTP."
+        },
+        "cloudru.ssh.hostTemplate": {
+          "type": "string",
+          "default": "ssh-{pool}-jupyter.ai.cloud.ru",
+          "description": "SSH gateway host template; {pool} is derived from the notebook (e.g. a100). Override for other regions."
+        },
+        "cloudru.ssh.port": {
+          "type": "number",
+          "default": 2222,
+          "description": "SSH gateway port."
         }
       }
     }
@@ -158,11 +187,13 @@
   },
   "dependencies": {
     "http-proxy": "^1.18.1",
-    "puppeteer-core": "^22.15.0"
+    "puppeteer-core": "^22.15.0",
+    "ssh2": "^1.15.0"
   },
   "devDependencies": {
     "@types/http-proxy": "^1.17.14",
     "@types/node": "^20.14.0",
+    "@types/ssh2": "^1.15.0",
     "@types/vscode": "^1.90.0",
     "esbuild": "^0.21.5",
     "typescript": "^5.4.5",
