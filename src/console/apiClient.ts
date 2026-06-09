@@ -27,13 +27,32 @@ export class ConsoleApiClient {
 
   async listNotebooks(ws: WorkspaceContext): Promise<NotebookHandlerResponse[]> {
     const res = await this.request<ConsoleNotebooksResponse>(
+      "GET",
       "/notebooks/v2/?include_private=true",
       ws.workspaceId,
     );
     return (res.notebooks ?? []).map(mapConsoleNotebook);
   }
 
-  private async request<T>(path: string, workspaceId: string): Promise<T> {
+  async pauseNotebook(ws: WorkspaceContext, uid: string): Promise<void> {
+    await this.request<unknown>("POST", `/notebooks/v4/${uid}/pause`, ws.workspaceId);
+  }
+
+  async resumeNotebook(ws: WorkspaceContext, namespace: string, body: unknown): Promise<void> {
+    await this.request<unknown>(
+      "POST",
+      `/jup_web_app/v3/notebooks/${namespace}/resume_request`,
+      ws.workspaceId,
+      body,
+    );
+  }
+
+  private async request<T>(
+    method: "GET" | "POST",
+    path: string,
+    workspaceId: string,
+    body?: unknown,
+  ): Promise<T> {
     const token = await this.getToken();
     const headers: Record<string, string> = {
       Accept: "application/json",
@@ -41,10 +60,15 @@ export class ConsoleApiClient {
       "x-workspace-id": workspaceId,
       "front-initiator-namespace": NAMESPACE_HEADER,
     };
+    const init: RequestInit = { method, headers };
+    if (body !== undefined) {
+      headers["Content-Type"] = "application/json";
+      init.body = JSON.stringify(body);
+    }
 
     let response: Response;
     try {
-      response = await this.fetchImpl(this.baseUrl + path, { headers });
+      response = await this.fetchImpl(this.baseUrl + path, init);
     } catch (cause) {
       throw new ApiError("network", `Network error contacting the Cloud.ru console: ${String(cause)}`);
     }

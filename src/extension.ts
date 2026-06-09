@@ -72,7 +72,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(serverProvider);
   await registerJupyterServerCollection(context, serverProvider, logger);
 
-  context.subscriptions.push(...registerCommands({ auth, session, tree, notebooks, ssh, logger }));
+  context.subscriptions.push(...registerCommands({ auth, client, session, tree, notebooks, ssh, logger }));
 
   // Keep the `when`-context, the tree, and the kernel servers in sync with auth/workspace changes.
   await setAuthenticatedContext(await auth.isSignedIn());

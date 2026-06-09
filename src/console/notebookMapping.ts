@@ -19,6 +19,9 @@ export interface ConsoleNotebook {
   namespace?: string;
   creationTimestamp?: number | null;
   created_at?: string;
+  image_source?: string;
+  allocation_name?: string | null;
+  queue_name?: string | null;
 }
 
 export interface ConsoleNotebooksResponse {
@@ -48,5 +51,8 @@ export function mapConsoleNotebook(n: ConsoleNotebook): NotebookHandlerResponse 
     notebookType: n.notebookType ?? null,
     creationTimestamp: creationTimestamp(n),
     namespace: n.namespace,
+    imageSource: n.image_source,
+    allocationName: n.allocation_name ?? null,
+    allocationQueueName: n.queue_name ?? null,
   };
 }
