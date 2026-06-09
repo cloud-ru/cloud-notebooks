@@ -1,0 +1,176 @@
+{
+  "name": "cloudru-jupyter-vscode",
+  "displayName": "Cloud.ru ML Space Notebooks",
+  "description": "Sign in to Cloud.ru, browse Jupyter Server notebooks created in the ML Space console, and open them.",
+  "version": "0.0.1",
+  "publisher": "cloudru",
+  "license": "Apache-2.0",
+  "private": true,
+  "packageManager": "pnpm@10.22.0",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Data Science",
+    "Notebooks",
+    "Machine Learning"
+  ],
+  "keywords": [
+    "cloud.ru",
+    "mlspace",
+    "jupyter",
+    "notebook",
+    "remote"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cloud-ru/cloudru-jupyter-vscode"
+  },
+  "activationEvents": [
+    "onView:cloudruNotebooks"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "cloudru",
+          "title": "Cloud.ru ML Space",
+          "icon": "media/activity-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "cloudru": [
+        {
+          "id": "cloudruNotebooks",
+          "name": "Notebooks",
+          "icon": "media/activity-icon.svg",
+          "contextualTitle": "Cloud.ru ML Space"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "cloudruNotebooks",
+        "contents": "Sign in to Cloud.ru to view the Jupyter Server notebooks created in the ML Space console.\n[Sign in to Cloud.ru](command:cloudru.signIn)",
+        "when": "!cloudru.authenticated"
+      },
+      {
+        "view": "cloudruNotebooks",
+        "contents": "No workspace selected.\n[Select Workspace](command:cloudru.selectWorkspace)",
+        "when": "cloudru.authenticated"
+      }
+    ],
+    "commands": [
+      {
+        "command": "cloudru.signIn",
+        "title": "Cloud.ru: Sign In",
+        "icon": "$(sign-in)"
+      },
+      {
+        "command": "cloudru.signOut",
+        "title": "Cloud.ru: Sign Out",
+        "icon": "$(sign-out)"
+      },
+      {
+        "command": "cloudru.selectWorkspace",
+        "title": "Cloud.ru: Select Workspace",
+        "icon": "$(organization)"
+      },
+      {
+        "command": "cloudru.refreshNotebooks",
+        "title": "Cloud.ru: Refresh Notebooks",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "cloudru.openNotebook",
+        "title": "Cloud.ru: Open Notebook in VS Code",
+        "icon": "$(notebook)"
+      },
+      {
+        "command": "cloudru.openNotebookInBrowser",
+        "title": "Cloud.ru: Open Notebook in Browser",
+        "icon": "$(link-external)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "cloudru.refreshNotebooks",
+          "when": "view == cloudruNotebooks && cloudru.authenticated",
+          "group": "navigation@1"
+        },
+        {
+          "command": "cloudru.selectWorkspace",
+          "when": "view == cloudruNotebooks && cloudru.authenticated",
+          "group": "navigation@2"
+        },
+        {
+          "command": "cloudru.signOut",
+          "when": "view == cloudruNotebooks && cloudru.authenticated",
+          "group": "navigation@3"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "cloudru.openNotebook",
+          "when": "view == cloudruNotebooks && viewItem == notebook.running",
+          "group": "inline@1"
+        },
+        {
+          "command": "cloudru.openNotebookInBrowser",
+          "when": "view == cloudruNotebooks && viewItem =~ /^notebook/",
+          "group": "inline@2"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Cloud.ru ML Space",
+      "properties": {
+        "cloudru.api.baseUrl": {
+          "type": "string",
+          "default": "https://api.ai.cloud.ru",
+          "description": "Base URL of the Cloud.ru ML Space public API (without the /public/v2 suffix)."
+        },
+        "cloudru.notebook.chromePath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to a Chrome/Chromium/Edge executable used for the one-time notebook sign-in. Leave empty to auto-detect."
+        },
+        "cloudru.notebook.tlsVerify": {
+          "type": "boolean",
+          "default": true,
+          "description": "Verify the notebook server's TLS certificate. The shim trusts the system CA store by default; disable only on isolated networks where verification cannot be satisfied."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "node esbuild.js --production",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "bundle": "node esbuild.js",
+    "bundle:watch": "node esbuild.js --watch",
+    "package": "node esbuild.js --production",
+    "typecheck": "tsc --noEmit -p ./",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "http-proxy": "^1.18.1",
+    "puppeteer-core": "^22.15.0"
+  },
+  "devDependencies": {
+    "@types/http-proxy": "^1.17.14",
+    "@types/node": "^20.14.0",
+    "@types/vscode": "^1.90.0",
+    "esbuild": "^0.21.5",
+    "typescript": "^5.4.5",
+    "vitest": "^1.6.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}
