@@ -1,0 +1,34 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "bundle",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["bundle"],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "bundle:watch",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["bundle:watch"],
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "esbuild",
+        "pattern": {
+          "regexp": "."
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "esbuild: watching",
+          "endsPattern": "build finished, watching for changes"
+        }
+      }
+    }
+  ]
+}
