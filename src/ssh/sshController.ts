@@ -111,19 +111,30 @@ export class SshController {
   }
 
   private async promptAccountId(): Promise<string | undefined> {
-    const command = await vscode.window.showInputBox({
-      title: "Cloud.ru SSH — paste the connection command",
-      prompt: "Paste the SSH command from the console (Jupyter Servers → ⋮ → SSH).",
-      placeHolder: "ssh name.ai0000000-00000@ssh-a100-jupyter.ai.cloud.ru -p 2222 -i <key>",
+    const input = await vscode.window.showInputBox({
+      title: "Cloud.ru SSH — connection command or account id",
+      prompt:
+        "Paste the SSH command from the console (you can drop the “-i <key>” part — the key file you " +
+        "picked is used). Only the account id is read from it. You may also just type the account id.",
+      placeHolder: "ssh name.ai0000000-00000@ssh-a100-jupyter.ai.cloud.ru -p 2222   ·   or just  ai0000000-00000",
       ignoreFocusOut: true,
     });
-    if (!command) return undefined;
-    const parsed = parseSshCommand(command);
-    if (!parsed) {
-      void vscode.window.showErrorMessage("Could not parse the SSH command. Expected user@host with a dot in the user.");
+    if (!input) return undefined;
+
+    const trimmed = input.trim();
+    // Accept a full SSH command, or a bare account id like "ai0000000-00000".
+    const accountId = trimmed.includes("@")
+      ? parseSshCommand(trimmed)?.accountId
+      : /^[A-Za-z]+\d+-\d+$/.test(trimmed)
+        ? trimmed
+        : undefined;
+    if (!accountId) {
+      void vscode.window.showErrorMessage(
+        "Could not read the account id. Paste the full SSH command, or just the id (e.g. ai0000000-00000).",
+      );
       return undefined;
     }
-    await this.deps.context.workspaceState.update(ACCOUNT_ID_KEY, parsed.accountId);
-    return parsed.accountId;
+    await this.deps.context.workspaceState.update(ACCOUNT_ID_KEY, accountId);
+    return accountId;
   }
 }
