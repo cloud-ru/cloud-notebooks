@@ -36,19 +36,24 @@ export class SshConnection {
   /**
    * Open a local TCP forward (`ssh -L`) to `remoteHost:remotePort` on the pod and return the local
    * port. Used to reach the pod's tokenless JupyterLab (127.0.0.1:8888) directly, bypassing the proxy.
+   * `onError` surfaces per-connection/channel failures (e.g. WebSocket) for diagnostics.
    */
-  async forward(remoteHost: string, remotePort: number): Promise<number> {
+  async forward(remoteHost: string, remotePort: number, onError?: (error: Error) => void): Promise<number> {
     const client = await this.getClient();
     const server = net.createServer((socket) => {
-      client.forwardOut("127.0.0.1", 0, remoteHost, remotePort, (err, stream) => {
+      socket.on("error", (err) => onError?.(err));
+      const srcPort = socket.remotePort ?? 0;
+      client.forwardOut(socket.remoteAddress ?? "127.0.0.1", srcPort, remoteHost, remotePort, (err, stream) => {
         if (err) {
-          socket.destroy(err);
+          onError?.(err);
+          socket.destroy();
           return;
         }
+        stream.on("error", (streamErr: Error) => onError?.(streamErr));
         socket.pipe(stream);
         stream.pipe(socket);
-        stream.on("error", () => socket.destroy());
-        socket.on("error", () => stream.destroy());
+        socket.on("close", () => stream.end());
+        stream.on("close", () => socket.destroy());
       });
     });
     this.forwardServers.push(server);

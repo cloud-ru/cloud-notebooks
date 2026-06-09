@@ -70,7 +70,9 @@ export class CloudruServerProvider implements JupyterServerProvider {
     if (!target) throw new Error("SSH is not configured (private key / account id).");
 
     const connection = new SshConnection(target);
-    const localPort = await connection.forward("127.0.0.1", POD_JUPYTER_PORT);
+    const localPort = await connection.forward("127.0.0.1", POD_JUPYTER_PORT, (err) =>
+      this.deps.logger.error(`Kernel tunnel error for ${notebook.name}`, err),
+    );
     const baseUrl = buildKernelBaseUrl(localPort, parseNotebookUrl(notebook.url).prefix);
     this.forwards.set(uid, { connection, baseUrl });
     this.deps.logger.info(`Kernel tunnel for ${notebook.name}: ${baseUrl}`);
