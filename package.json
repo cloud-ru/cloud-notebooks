@@ -92,6 +92,16 @@
         "icon": "$(notebook)"
       },
       {
+        "command": "cloudru.resumeNotebook",
+        "title": "Cloud.ru: Start (Resume) Notebook",
+        "icon": "$(run)"
+      },
+      {
+        "command": "cloudru.pauseNotebook",
+        "title": "Cloud.ru: Pause Notebook",
+        "icon": "$(debug-pause)"
+      },
+      {
         "command": "cloudru.openNotebookFiles",
         "title": "Cloud.ru: Browse Notebook Files (SSH)",
         "icon": "$(folder-opened)"
@@ -204,6 +214,16 @@
           "command": "cloudru.removeFavorite",
           "when": "view == cloudruNotebooks && viewItem =~ /\\.fav$/",
           "group": "inline@4"
+        },
+        {
+          "command": "cloudru.resumeNotebook",
+          "when": "view == cloudruNotebooks && viewItem =~ /^notebook\\.paused/",
+          "group": "inline@0"
+        },
+        {
+          "command": "cloudru.pauseNotebook",
+          "when": "view == cloudruNotebooks && viewItem =~ /^notebook\\.running/",
+          "group": "inline@5"
         },
         {
           "command": "cloudru.openNotebookInBrowser",

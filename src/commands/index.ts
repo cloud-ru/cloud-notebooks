@@ -1,6 +1,9 @@
 import * as vscode from "vscode";
 import { ApiError } from "../api/errors";
+import type { WorkspaceContext } from "../api/types";
+import type { ConsoleApiClient } from "../console/apiClient";
 import type { ConsoleTokenProvider } from "../console/tokenProvider";
+import { buildResumeBody } from "../console/resumeBody";
 import type { SessionStore } from "../session/sessionStore";
 import type { Logger } from "../util/logger";
 import type { NotebookTreeItem, NotebooksTreeProvider } from "../views/notebooksTree";
@@ -9,6 +12,7 @@ import type { SshController } from "../ssh/sshController";
 
 export interface CommandDeps {
   auth: ConsoleTokenProvider;
+  client: ConsoleApiClient;
   session: SessionStore;
   tree: NotebooksTreeProvider;
   notebooks: NotebookViewController;
@@ -17,7 +21,7 @@ export interface CommandDeps {
 }
 
 export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
-  const { auth, session, tree, notebooks, ssh, logger } = deps;
+  const { auth, client, session, tree, notebooks, ssh, logger } = deps;
 
   const run = (id: string, body: (...args: unknown[]) => Promise<void>): vscode.Disposable =>
     vscode.commands.registerCommand(id, (...args: unknown[]) => withErrorHandling(auth, logger, body, ...args));
@@ -108,6 +112,27 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
       await ssh.openFullIde(item.notebook);
     }),
 
+    run("cloudru.pauseNotebook", async (...args: unknown[]) => {
+      const item = args[0] as NotebookTreeItem | undefined;
+      const ws = session.get();
+      if (!item || !ws) return;
+      await client.pauseNotebook(ws, item.notebook.uid);
+      await pollUntil(client, ws, item.notebook.uid, tree, (s) => s.startsWith("paused"), `Pausing ${item.notebook.name}…`, 120_000);
+    }),
+
+    run("cloudru.resumeNotebook", async (...args: unknown[]) => {
+      const item = args[0] as NotebookTreeItem | undefined;
+      const ws = session.get();
+      if (!item || !ws) return;
+      const { namespace, name } = item.notebook;
+      if (!namespace) {
+        void vscode.window.showErrorMessage(`Cannot resume “${name}”: missing namespace.`);
+        return;
+      }
+      await client.resumeNotebook(ws, namespace, buildResumeBody(item.notebook));
+      await pollUntil(client, ws, item.notebook.uid, tree, (s) => s === "running", `Starting ${name}…`, 300_000);
+    }),
+
     run("cloudru.configureSsh", async () => {
       await ssh.configure();
     }),
@@ -140,6 +165,43 @@ async function selectWorkspace(session: SessionStore): Promise<void> {
   if (!id) return;
   await session.set({ workspaceId: id, workspaceName: id });
   void vscode.window.showInformationMessage(`Cloud.ru workspace: ${id}`);
+}
+
+/** Poll the notebook list until `isDone(status)`, refreshing the tree, with a progress notification. */
+async function pollUntil(
+  client: ConsoleApiClient,
+  ws: WorkspaceContext,
+  uid: string,
+  tree: NotebooksTreeProvider,
+  isDone: (status: string) => boolean,
+  title: string,
+  timeoutMs: number,
+): Promise<void> {
+  await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title }, async () => {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      tree.refresh();
+      let notebooks: Awaited<ReturnType<ConsoleApiClient["listNotebooks"]>> | undefined;
+      try {
+        notebooks = await client.listNotebooks(ws);
+      } catch {
+        // transient; keep polling
+      }
+      const nb = notebooks?.find((n) => n.uid === uid);
+      if (nb && isDone(nb.status)) {
+        tree.refresh();
+        return;
+      }
+      await delay(3000);
+    }
+    tree.refresh();
+  });
+}
+
+function delay(ms: number): Promise<void> {
+  const { promise, resolve } = Promise.withResolvers<void>();
+  setTimeout(resolve, ms);
+  return promise;
 }
 async function withErrorHandling(
   auth: ConsoleTokenProvider,

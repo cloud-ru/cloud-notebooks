@@ -37,6 +37,10 @@ export interface NotebookHandlerResponse {
   updated_at?: string | null;
   /** Kubernetes namespace (from the console API; used for resume). */
   namespace?: string | undefined;
+  /** Image source: "harbor" | "artifact_registry" — needed to build the resume body. */
+  imageSource?: string | undefined;
+  allocationName?: string | null;
+  allocationQueueName?: string | null;
 }
 
 /** The active workspace selection (`x-workspace-id`). */
