@@ -82,6 +82,8 @@ export interface NotebookHandlerResponse {
   pause_at?: string | null;
   creationTimestamp?: number | null;
   updated_at?: string | null;
+  /** Kubernetes namespace (present from the console API; used for resume). */
+  namespace?: string | undefined;
 }
 
 export interface ListNotebooksResponseV2 {
