@@ -33,7 +33,12 @@ export class NotebookViewController {
     const shim = await this.ensureShim(notebook);
     if (!shim) return;
 
-    const localUrl = `${shim.baseUrl}${labPath(prefix)}`;
+    // Jupyter runs with base_url=NB_PREFIX, so its UI is at "<prefix>lab". Other app images (marimo,
+    // vscode, comfyui, n8n, …) serve from the root — the proxy strips the prefix, so over the direct
+    // tunnel we request "/".
+    const isJupyter = /jupyter/i.test(notebook.image) || /\/lab\b/.test(notebook.url);
+    const appPath = isJupyter ? labPath(prefix) : "/";
+    const localUrl = `${shim.baseUrl}${appPath}`;
     // asExternalUri: the sanctioned way to frame a local server in a webview (works in forks/remote).
     const external = await vscode.env.asExternalUri(vscode.Uri.parse(localUrl));
     this.deps.logger.info(`Opening notebook webview: shim=${shim.baseUrl} frame=${external.toString()}`);
