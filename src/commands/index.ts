@@ -51,6 +51,48 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
     run("cloudru.refreshNotebooks", async () => {
       tree.refresh();
     }),
+
+    run("cloudru.searchNotebooks", async () => {
+      const query = await vscode.window.showInputBox({
+        title: "Search notebooks by name",
+        prompt: "Type part of a notebook name (empty to clear).",
+        ignoreFocusOut: true,
+      });
+      if (query === undefined) return; // cancelled — keep current filter
+      tree.setSearch(query);
+    }),
+
+    run("cloudru.filterByAuthor", async () => {
+      const authors = tree.authors();
+      if (authors.length === 0) {
+        void vscode.window.showInformationMessage("No notebooks loaded yet to filter by author.");
+        return;
+      }
+      const picked = await vscode.window.showQuickPick(["All authors", ...authors], {
+        title: "Filter notebooks by author",
+        ignoreFocusOut: true,
+      });
+      if (picked === undefined) return;
+      tree.setAuthor(picked === "All authors" ? undefined : picked);
+    }),
+
+    run("cloudru.toggleFavoritesFilter", async () => {
+      tree.toggleFavoritesOnly();
+    }),
+
+    run("cloudru.clearFilters", async () => {
+      tree.clearFilters();
+    }),
+
+    run("cloudru.addFavorite", async (...args: unknown[]) => {
+      const item = args[0] as NotebookTreeItem | undefined;
+      if (item) await tree.toggleFavorite(item.notebook.uid);
+    }),
+
+    run("cloudru.removeFavorite", async (...args: unknown[]) => {
+      const item = args[0] as NotebookTreeItem | undefined;
+      if (item) await tree.toggleFavorite(item.notebook.uid);
+    }),
     run("cloudru.openNotebook", async (...args: unknown[]) => {
       const item = args[0] as NotebookTreeItem | undefined;
       if (!item) return;
