@@ -61,6 +61,37 @@ export class SshConfig {
     return { ...target, privateKey };
   }
 
+  /** SSH details for an `~/.ssh/config` Host entry used by Remote-SSH (full IDE mode). */
+  async resolveConfigEntry(
+    notebook: NotebookHandlerResponse,
+  ): Promise<{ host: string; port: number; username: string; identityFile: string } | undefined> {
+    if (!notebook.url) return undefined;
+
+    const identityFile = await this.ensureKeyPath();
+    if (!identityFile) return undefined;
+    const accountId = await this.ensureAccountId();
+    if (!accountId) return undefined;
+
+    const config = vscode.workspace.getConfiguration("cloudru");
+    const host = deriveSshHost(notebook.url, config.get<string>("ssh.hostTemplate", DEFAULT_SSH_HOST_TEMPLATE));
+    if (!host) {
+      void vscode.window.showErrorMessage(`Could not derive the SSH host from ${notebook.url}.`);
+      return undefined;
+    }
+    return {
+      host,
+      port: config.get<number>("ssh.port", DEFAULT_SSH_PORT),
+      username: buildUsername(notebook.name, accountId),
+      identityFile,
+    };
+  }
+
+  /** Path to the configured private key, prompting to pick one if not set. */
+  private async ensureKeyPath(): Promise<string | undefined> {
+    const path = vscode.workspace.getConfiguration("cloudru").get<string>("ssh.privateKeyPath", "");
+    return path || (await this.pickPrivateKey());
+  }
+
   private async saveTarget(uid: string, target: PersistedTarget): Promise<void> {
     const all = this.context.globalState.get<Record<string, PersistedTarget>>(TARGETS_KEY, {});
     all[uid] = target;

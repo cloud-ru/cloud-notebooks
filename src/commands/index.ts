@@ -105,6 +105,12 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
       await ssh.openFiles(item.notebook);
     }),
 
+    run("cloudru.openFullIde", async (...args: unknown[]) => {
+      const item = args[0] as NotebookTreeItem | undefined;
+      if (!item) return;
+      await ssh.openFullIde(item.notebook);
+    }),
+
     run("cloudru.configureSsh", async () => {
       await ssh.configure();
     }),

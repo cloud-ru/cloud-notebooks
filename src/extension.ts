@@ -60,7 +60,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     vscode.workspace.registerFileSystemProvider(SSH_SCHEME, sshFs, { isCaseSensitive: true }),
   );
-  const ssh = new SshController({ provider: sshFs, config: sshConfig, logger });
+  const ssh = new SshController({ provider: sshFs, config: sshConfig, context, logger });
 
   // Remote kernel (Colab-style): contribute notebooks as Jupyter servers tunneled over SSH.
   const serverProvider = new CloudruServerProvider({
