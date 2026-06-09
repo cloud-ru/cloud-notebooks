@@ -44,9 +44,18 @@ export class NotebookViewController {
     if (!cookie) return; // login cancelled or no browser available
 
     const shim = await this.ensureShim(origin, host);
+    const localUrl = `${shim.baseUrl}${labPath(prefix)}`;
+    // Use asExternalUri: the sanctioned way to embed a local server in a webview iframe (works in
+    // VS Code and forks, and sets up port forwarding in remote/web).
+    const external = await vscode.env.asExternalUri(vscode.Uri.parse(localUrl));
+    const frameSrc = external.toString();
+    const frameOrigin = `${external.scheme}://${external.authority}`;
+    this.deps.logger.info(`Opening notebook webview: shim=${shim.baseUrl} frame=${frameSrc}`);
+
     const panel = openNotebookPanel({
       title: notebook.name,
-      iframeUrl: shim.baseUrl + labPath(prefix),
+      frameSrc,
+      frameOrigin,
       existing: this.panels.get(notebook.uid),
     });
     this.panels.set(notebook.uid, panel);
