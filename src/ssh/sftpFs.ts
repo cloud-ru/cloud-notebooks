@@ -47,9 +47,18 @@ export class CloudruSshFsProvider implements vscode.FileSystemProvider {
   readonly onDidChangeFile = this.emitter.event;
   private readonly connections = new Map<string, SshConnection>();
 
-  register(authority: string, config: SshConnectionConfig): void {
+  /**
+   * `reconnect` rebuilds a connection config for an authority without prompting — used to recover
+   * after an extension-host reload (when adding the first workspace folder restarts the host and the
+   * in-memory connections are gone).
+   */
+  constructor(private readonly reconnect?: (authority: string) => Promise<SshConnectionConfig | undefined>) {}
+
+  register(authority: string, config: SshConnectionConfig): SshConnection {
     this.connections.get(authority)?.dispose();
-    this.connections.set(authority, new SshConnection(config));
+    const connection = new SshConnection(config);
+    this.connections.set(authority, connection);
+    return connection;
   }
 
   /** Resolve the login home directory of an authority (used as the mount root). */
@@ -173,11 +182,16 @@ export class CloudruSshFsProvider implements vscode.FileSystemProvider {
   }
 
   private async sftpFor(authority: string): Promise<SFTPWrapper> {
-    const connection = this.connections.get(authority);
-    if (!connection) {
-      throw vscode.FileSystemError.Unavailable(`No SSH connection registered for "${authority}".`);
+    const existing = this.connections.get(authority);
+    if (existing) return existing.sftp();
+
+    const config = await this.reconnect?.(authority);
+    if (!config) {
+      throw vscode.FileSystemError.Unavailable(
+        `No SSH connection for "${authority}". Re-run “Browse Notebook Files (SSH)”.`,
+      );
     }
-    return connection.sftp();
+    return this.register(authority, config).sftp();
   }
 
   private path(uri: vscode.Uri): string {
