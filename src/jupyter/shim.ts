@@ -37,16 +37,17 @@ export class NotebookShim {
   private url = "";
 
   constructor(opts: NotebookShimOptions) {
+    const isHttps = opts.origin.startsWith("https");
     this.proxy = httpProxy.createProxyServer({
       target: opts.origin,
       changeOrigin: true,
-      secure: opts.tlsVerify,
-      agent: createUpstreamAgent(opts.tlsVerify),
       ws: true,
       autoRewrite: false,
       followRedirects: false,
-      proxyTimeout: 20_000,
-      timeout: 20_000,
+      proxyTimeout: 60_000,
+      timeout: 60_000,
+      // TLS agent only for https upstreams (e.g. the OIDC proxy); the SSH-tunnelled pod is plain http.
+      ...(isHttps ? { secure: opts.tlsVerify, agent: createUpstreamAgent(opts.tlsVerify) } : {}),
     });
 
     this.proxy.on("proxyReq", (proxyReq, req) => {

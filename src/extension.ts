@@ -47,10 +47,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(notebooksView);
   tree.attachView(notebooksView);
 
-  const notebooks = new NotebookViewController({ secrets: context.secrets, context, logger });
+  const sshConfig = new SshConfig(context);
+
+  const notebooks = new NotebookViewController({ config: sshConfig, logger });
   context.subscriptions.push(notebooks);
 
-  const sshConfig = new SshConfig(context);
   const sshFs = new CloudruSshFsProvider((uid) => sshConfig.resolveSilently(uid));
   context.subscriptions.push(sshFs);
   context.subscriptions.push(
