@@ -103,6 +103,7 @@ export class NotebookViewController {
       getSessionCookie: () => this.cookies.get(host) ?? "",
       onAuthExpired: () => this.invalidate(host),
       onError: (err) => this.deps.logger.error(`Notebook proxy error for ${host}`, err),
+      onTrace: (method, url, status) => this.deps.logger.info(`shim ${status} ${method} ${url}`),
       tlsVerify,
     });
     await shim.start();
