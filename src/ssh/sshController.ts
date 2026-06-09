@@ -3,19 +3,26 @@ import type { NotebookHandlerResponse } from "../api/types";
 import type { Logger } from "../util/logger";
 import { CloudruSshFsProvider, SSH_SCHEME } from "./sftpFs";
 import type { SshConfig } from "./sshConfig";
+import { openFullIde } from "./remoteSsh";
 
 /**
- * Orchestrates the SSH file browser: resolves the SSH target via {@link SshConfig} and mounts a
- * notebook's home directory as a workspace folder backed by the SFTP `FileSystemProvider`.
+ * Orchestrates the SSH features: mounts a notebook's home as a workspace folder over SFTP (file
+ * browser) and hands off to Remote-SSH for the full IDE (terminal + remote IntelliSense).
  */
 export class SshController {
   constructor(
     private readonly deps: {
       provider: CloudruSshFsProvider;
       config: SshConfig;
+      context: vscode.ExtensionContext;
       logger: Logger;
     },
   ) {}
+
+  /** Open the notebook as a full remote-dev window (Remote-SSH). */
+  openFullIde(notebook: NotebookHandlerResponse): Promise<void> {
+    return openFullIde(notebook, this.deps.config, this.deps.context, this.deps.logger);
+  }
 
   async openFiles(notebook: NotebookHandlerResponse): Promise<void> {
     if (notebook.status !== "running" || !notebook.url) {
