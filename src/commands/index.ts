@@ -138,10 +138,9 @@ async function selectWorkspace(session: SessionStore): Promise<void> {
   });
   const id = input?.trim();
   if (!id) return;
-  await session.set({ workspaceId: id, xApiKey: "", namespace: "", workspaceName: id });
+  await session.set({ workspaceId: id, workspaceName: id });
   void vscode.window.showInformationMessage(`Cloud.ru workspace: ${id}`);
 }
-
 async function withErrorHandling(
   auth: ConsoleTokenProvider,
   logger: Logger,
