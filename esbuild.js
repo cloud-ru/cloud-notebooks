@@ -12,10 +12,9 @@ const options = {
   platform: "node",
   format: "cjs",
   target: "node18",
-  // vscode is provided by the runtime; never bundle it.
-  // vscode is provided by the runtime; puppeteer-core is heavy + dynamic, so it is required from
-  // node_modules at runtime rather than bundled.
-  external: ["vscode", "puppeteer-core"],
+  // vscode is provided by the runtime; puppeteer-core and ssh2 are heavy / have optional native bits,
+  // so they are required from node_modules at runtime rather than bundled.
+  external: ["vscode", "puppeteer-core", "ssh2"],
   minify: production,
   logLevel: "info",
 };
