@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
-import { MlSpaceApiClient } from "./api/mlspaceClient";
-import { AuthService } from "./auth/authService";
+import { ConsoleApiClient } from "./console/apiClient";
+import { ConsoleTokenProvider } from "./console/tokenProvider";
 import { registerCommands } from "./commands";
 import { SessionStore } from "./session/sessionStore";
 import { Logger } from "./util/logger";
@@ -19,20 +19,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const logger = new Logger();
   context.subscriptions.push(logger);
 
-  const baseUrl = vscode.workspace
+  const consoleBaseUrl = vscode.workspace
     .getConfiguration("cloudru")
-    .get<string>("api.baseUrl", "https://api.ai.cloud.ru");
+    .get<string>("console.apiBaseUrl", "https://console.cloud.ru/aicloud/ui");
 
-  // Wire AuthService <-> client. `auth` is referenced lazily inside getToken, so the
-  // declaration order is fine: getToken only runs after activation completes.
-  let auth: AuthService;
-  const client = new MlSpaceApiClient({ baseUrl, getToken: () => auth.getAccessToken() });
-  auth = new AuthService({
-    secrets: context.secrets,
-    logger,
-    exchange: (creds) => client.authenticate(creds),
-  });
+  const auth = new ConsoleTokenProvider({ context, logger });
   context.subscriptions.push(auth);
+  const client = new ConsoleApiClient({
+    baseUrl: consoleBaseUrl,
+    getToken: () => auth.getAccessToken(),
+  });
 
   const session = new SessionStore(context.secrets);
   context.subscriptions.push(session);
@@ -75,7 +71,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(serverProvider);
   await registerJupyterServerCollection(context, serverProvider, logger);
 
-  context.subscriptions.push(...registerCommands({ auth, client, session, tree, notebooks, ssh, logger }));
+  context.subscriptions.push(...registerCommands({ auth, session, tree, notebooks, ssh, logger }));
 
   // Keep the `when`-context, the tree, and the kernel servers in sync with auth/workspace changes.
   await setAuthenticatedContext(await auth.isSignedIn());
