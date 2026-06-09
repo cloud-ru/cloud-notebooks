@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import * as path from "node:path";
 import * as vscode from "vscode";
 import puppeteer from "puppeteer-core";
 import { isJwtExpired } from "../auth/jwt";
@@ -22,6 +23,8 @@ interface CdpCookie {
  */
 export class ConsoleTokenProvider {
   private cached: string | undefined;
+  /** Serializes browser launches so concurrent callers never collide on the profile's SingletonLock. */
+  private chain: Promise<string | undefined> = Promise.resolve(undefined);
   private readonly onDidChange = new vscode.EventEmitter<boolean>();
   readonly onDidChangeAuth = this.onDidChange.event;
 
@@ -55,7 +58,20 @@ export class ConsoleTokenProvider {
     return token;
   }
 
-  private async mint(interactive: boolean): Promise<string | undefined> {
+  /** Serialize mints so two browser launches never share the profile concurrently. */
+  private mint(interactive: boolean): Promise<string | undefined> {
+    const next = this.chain.then(
+      () => this.doMint(interactive),
+      () => this.doMint(interactive),
+    );
+    this.chain = next.catch(() => undefined);
+    return next;
+  }
+
+  private async doMint(interactive: boolean): Promise<string | undefined> {
+    // A queued earlier mint may have already refreshed the token.
+    if (!interactive && this.cached && !isJwtExpired(this.cached)) return this.cached;
+
     const config = vscode.workspace.getConfiguration("cloudru");
     const chromePath = findChrome(config.get<string>("notebook.chromePath", ""));
     if (!chromePath) {
@@ -67,7 +83,14 @@ export class ConsoleTokenProvider {
     const consoleUrl = config.get<string>("console.url", DEFAULT_CONSOLE_URL);
     const userDataDir = vscode.Uri.joinPath(this.deps.context.globalStorageUri, "console-profile").fsPath;
     fs.mkdirSync(userDataDir, { recursive: true });
-
+    // Clear stale single-instance locks left by a crashed/not-closed previous browser.
+    for (const lock of ["SingletonLock", "SingletonCookie", "SingletonSocket"]) {
+      try {
+        fs.rmSync(path.join(userDataDir, lock), { force: true });
+      } catch {
+        // ignore
+      }
+    }
     const browser = await puppeteer.launch({
       headless: !interactive,
       executablePath: chromePath,
