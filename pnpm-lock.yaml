@@ -30,6 +30,9 @@ importers:
       '@types/vscode':
         specifier: ^1.90.0
         version: 1.120.0
+      '@vscode/jupyter-extension':
+        specifier: ^1.1.1
+        version: 1.1.1
       esbuild:
         specifier: ^0.21.5
         version: 0.21.5
@@ -358,6 +361,9 @@ packages:
 
   '@vitest/utils@1.6.1':
     resolution: {integrity: sha512-jOrrUvXM4Av9ZWiG1EajNto0u96kWAhJ1LmPmJhXXQx/32MecEKd10pOLYgS2BQx1TgkGhloPU1ArDW2vvaY6g==}
+
+  '@vscode/jupyter-extension@1.1.1':
+    resolution: {integrity: sha512-wQ7bEbrHSe9gfdT3PCNE/ayC+w8aFFXpJBlUjMN3WMZpO4fWXZv2O8gCf3w80a465uEhMDiSmuRYl0OR6RR25Q==}
 
   acorn-walk@8.3.5:
     resolution: {integrity: sha512-HEHNfbars9v4pgpW6SO1KSPkfoS0xVOM/9UzkJltjlsHZmJasxg8aXkuZa7SMf8vKGIBhpUsPluQSqhJFCqebw==}
@@ -1252,6 +1258,8 @@ snapshots:
       estree-walker: 3.0.3
       loupe: 2.3.7
       pretty-format: 29.7.0
+
+  '@vscode/jupyter-extension@1.1.1': {}
 
   acorn-walk@8.3.5:
     dependencies:
