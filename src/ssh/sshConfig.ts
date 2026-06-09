@@ -11,6 +11,13 @@ import {
 } from "./sshUrl";
 
 const ACCOUNT_ID_KEY = "cloudru.ssh.accountId";
+const TARGETS_KEY = "cloudru.ssh.targets";
+
+interface PersistedTarget {
+  host: string;
+  port: number;
+  username: string;
+}
 
 /**
  * Captures and resolves the one-time SSH inputs that are not in the public API — the private key
@@ -37,7 +44,31 @@ export class SshConfig {
       void vscode.window.showErrorMessage(`Could not derive the SSH host from ${notebook.url}.`);
       return undefined;
     }
-    return { host, port, username: buildUsername(notebook.name, accountId), privateKey };
+    const username = buildUsername(notebook.name, accountId);
+    await this.saveTarget(notebook.uid, { host, port, username });
+    return { host, port, username, privateKey };
+  }
+
+  /**
+   * Rebuild a target for a previously-mounted notebook without any prompts (used by the file system
+   * provider to reconnect after an extension-host reload). Returns undefined if config is missing.
+   */
+  async resolveSilently(uid: string): Promise<SshConnectionConfig | undefined> {
+    const target = this.loadTarget(uid);
+    if (!target) return undefined;
+    const privateKey = this.loadPrivateKey();
+    if (!privateKey) return undefined;
+    return { ...target, privateKey };
+  }
+
+  private async saveTarget(uid: string, target: PersistedTarget): Promise<void> {
+    const all = this.context.globalState.get<Record<string, PersistedTarget>>(TARGETS_KEY, {});
+    all[uid] = target;
+    await this.context.globalState.update(TARGETS_KEY, all);
+  }
+
+  private loadTarget(uid: string): PersistedTarget | undefined {
+    return this.context.globalState.get<Record<string, PersistedTarget>>(TARGETS_KEY, {})[uid];
   }
 
   /** Re-enter the private key and account id (explicit "Configure SSH" command). */
@@ -47,8 +78,16 @@ export class SshConfig {
   }
 
   private async ensurePrivateKey(): Promise<Buffer | undefined> {
-    let path = vscode.workspace.getConfiguration("cloudru").get<string>("ssh.privateKeyPath", "");
-    if (!path) path = (await this.pickPrivateKey()) ?? "";
+    const existing = this.loadPrivateKey();
+    if (existing) return existing;
+    const path = (await this.pickPrivateKey()) ?? "";
+    if (!path) return undefined;
+    return this.loadPrivateKey();
+  }
+
+  /** Read the configured private key from disk, without prompting. */
+  private loadPrivateKey(): Buffer | undefined {
+    const path = vscode.workspace.getConfiguration("cloudru").get<string>("ssh.privateKeyPath", "");
     if (!path) return undefined;
     try {
       return fs.readFileSync(path);
@@ -74,7 +113,7 @@ export class SshConfig {
   }
 
   private async ensureAccountId(): Promise<string | undefined> {
-    const stored = this.context.workspaceState.get<string>(ACCOUNT_ID_KEY);
+    const stored = this.context.globalState.get<string>(ACCOUNT_ID_KEY);
     if (stored) return stored;
     return this.promptAccountId();
   }
@@ -102,7 +141,7 @@ export class SshConfig {
       );
       return undefined;
     }
-    await this.context.workspaceState.update(ACCOUNT_ID_KEY, accountId);
+    await this.context.globalState.update(ACCOUNT_ID_KEY, accountId);
     return accountId;
   }
 }

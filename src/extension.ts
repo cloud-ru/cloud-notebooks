@@ -55,7 +55,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(notebooks);
 
   const sshConfig = new SshConfig(context);
-  const sshFs = new CloudruSshFsProvider();
+  const sshFs = new CloudruSshFsProvider((uid) => sshConfig.resolveSilently(uid));
   context.subscriptions.push(sshFs);
   context.subscriptions.push(
     vscode.workspace.registerFileSystemProvider(SSH_SCHEME, sshFs, { isCaseSensitive: true }),
