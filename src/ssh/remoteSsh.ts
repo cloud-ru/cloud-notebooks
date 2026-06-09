@@ -7,7 +7,6 @@ import type { Logger } from "../util/logger";
 import type { SshConfig } from "./sshConfig";
 import { formatHostStanza, type SshHostEntry, upsertSshConfigBlock } from "./sshConfigFile";
 
-const REMOTE_SSH_EXT = "ms-vscode-remote.remote-ssh";
 const REMOTE_HOME = "/home/jovyan";
 
 /** Open a notebook as a full remote-dev window via the Remote-SSH extension (terminal + IntelliSense). */
@@ -23,19 +22,14 @@ export async function openFullIde(
     );
     return;
   }
-  if (!vscode.extensions.getExtension(REMOTE_SSH_EXT)) {
-    const action = "Install Remote-SSH";
-    const picked = await vscode.window.showWarningMessage(
-      "The Remote-SSH extension is required for the full IDE mode.",
-      action,
+  // Detect any Remote-SSH flavour (official `ms-vscode-remote.remote-ssh`, plus fork equivalents like
+  // `jeanp413.open-remote-ssh` / `anysphere.remote-ssh`). Only warn — never block — since the id varies
+  // across editors and `vscode-remote://` is resolved by whichever provider is installed.
+  const hasRemoteSsh = vscode.extensions.all.some((ext) => /remote-ssh/i.test(ext.id));
+  if (!hasRemoteSsh) {
+    void vscode.window.showWarningMessage(
+      "No Remote-SSH extension detected. If the window fails to connect, install “Remote - SSH” (or your editor's equivalent).",
     );
-    if (picked === action) {
-      void vscode.commands.executeCommand(
-        "workbench.extensions.installExtension",
-        REMOTE_SSH_EXT,
-      );
-    }
-    return;
   }
 
   const entry = await sshConfig.resolveConfigEntry(notebook);
