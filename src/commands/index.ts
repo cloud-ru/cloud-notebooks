@@ -7,6 +7,7 @@ import type { SessionStore } from "../session/sessionStore";
 import type { Logger } from "../util/logger";
 import type { NotebookTreeItem, NotebooksTreeProvider } from "../views/notebooksTree";
 import type { NotebookViewController } from "../jupyter/notebookController";
+import type { SshController } from "../ssh/sshController";
 
 export interface CommandDeps {
   auth: AuthService;
@@ -14,11 +15,12 @@ export interface CommandDeps {
   session: SessionStore;
   tree: NotebooksTreeProvider;
   notebooks: NotebookViewController;
+  ssh: SshController;
   logger: Logger;
 }
 
 export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
-  const { auth, client, session, tree, notebooks, logger } = deps;
+  const { auth, client, session, tree, notebooks, ssh, logger } = deps;
 
   const run = (id: string, body: (...args: unknown[]) => Promise<void>): vscode.Disposable =>
     vscode.commands.registerCommand(id, (...args: unknown[]) => withErrorHandling(auth, logger, body, ...args));
@@ -55,6 +57,15 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
       await notebooks.open(item.notebook);
     }),
 
+    run("cloudru.openNotebookFiles", async (...args: unknown[]) => {
+      const item = args[0] as NotebookTreeItem | undefined;
+      if (!item) return;
+      await ssh.openFiles(item.notebook);
+    }),
+
+    run("cloudru.configureSsh", async () => {
+      await ssh.configure();
+    }),
 
     run("cloudru.openNotebookInBrowser", async (...args: unknown[]) => {
       const item = args[0] as NotebookTreeItem | undefined;

@@ -6,6 +6,8 @@ import { SessionStore } from "./session/sessionStore";
 import { Logger } from "./util/logger";
 import { NotebooksTreeProvider } from "./views/notebooksTree";
 import { NotebookViewController } from "./jupyter/notebookController";
+import { CloudruSshFsProvider, SSH_SCHEME } from "./ssh/sftpFs";
+import { SshController } from "./ssh/sshController";
 
 const AUTH_CONTEXT_KEY = "cloudru.authenticated";
 
@@ -46,7 +48,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const notebooks = new NotebookViewController({ secrets: context.secrets, context, logger });
   context.subscriptions.push(notebooks);
 
-  context.subscriptions.push(...registerCommands({ auth, client, session, tree, notebooks, logger }));
+  const sshFs = new CloudruSshFsProvider();
+  context.subscriptions.push(sshFs);
+  context.subscriptions.push(
+    vscode.workspace.registerFileSystemProvider(SSH_SCHEME, sshFs, { isCaseSensitive: true }),
+  );
+  const ssh = new SshController({ provider: sshFs, context, logger });
+
+  context.subscriptions.push(...registerCommands({ auth, client, session, tree, notebooks, ssh, logger }));
 
   // Keep the `when`-context and the tree in sync with auth/workspace changes.
   await setAuthenticatedContext(await auth.isSignedIn());
