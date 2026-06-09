@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Build output
+out/
+dist/
+*.vsix
+*.tsbuildinfo
+
+# Editor / OS
+.DS_Store
+.vscode-test/
+
+# Local secrets / env (never commit credentials)
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
