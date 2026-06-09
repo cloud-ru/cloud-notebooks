@@ -1,3 +1,4 @@
+import * as net from "node:net";
 import { Client } from "ssh2";
 import type { ConnectConfig, SFTPWrapper } from "ssh2";
 
@@ -10,20 +11,21 @@ export interface SshConnectionConfig {
 }
 
 /**
- * One SSH client + SFTP channel to a notebook's gateway. Connects lazily on first use and reconnects
- * after a drop (the cached promise is cleared on close/error). Offers `ssh-rsa` for the older keys
- * cloud.ru issues, and accepts the gateway host key (the username routes to the pod).
+ * One SSH client to a notebook's gateway, shared by the SFTP file browser and the local port forward
+ * used to reach the pod's Jupyter kernel. Connects lazily and clears its cached promises on close so
+ * the next use reconnects. Offers `ssh-rsa` for the older keys cloud.ru issues.
  */
 export class SshConnection {
-  private client: Client | undefined;
+  private clientPromise: Promise<Client> | undefined;
   private sftpPromise: Promise<SFTPWrapper> | undefined;
+  private readonly forwardServers: net.Server[] = [];
 
   constructor(private readonly config: SshConnectionConfig) {}
 
   /** Returns a ready SFTP channel, connecting on demand. */
   async sftp(): Promise<SFTPWrapper> {
     if (!this.sftpPromise) {
-      this.sftpPromise = this.open().catch((err) => {
+      this.sftpPromise = this.openSftp().catch((err) => {
         this.sftpPromise = undefined;
         throw err;
       });
@@ -31,18 +33,50 @@ export class SshConnection {
     return this.sftpPromise;
   }
 
-  private async open(): Promise<SFTPWrapper> {
-    const client = new Client();
-    this.client = client;
+  /**
+   * Open a local TCP forward (`ssh -L`) to `remoteHost:remotePort` on the pod and return the local
+   * port. Used to reach the pod's tokenless JupyterLab (127.0.0.1:8888) directly, bypassing the proxy.
+   */
+  async forward(remoteHost: string, remotePort: number): Promise<number> {
+    const client = await this.getClient();
+    const server = net.createServer((socket) => {
+      client.forwardOut("127.0.0.1", 0, remoteHost, remotePort, (err, stream) => {
+        if (err) {
+          socket.destroy(err);
+          return;
+        }
+        socket.pipe(stream);
+        stream.pipe(socket);
+        stream.on("error", () => socket.destroy());
+        socket.on("error", () => stream.destroy());
+      });
+    });
+    this.forwardServers.push(server);
 
+    const { promise, resolve, reject } = Promise.withResolvers<number>();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve((server.address() as net.AddressInfo).port));
+    return promise;
+  }
+
+  private async getClient(): Promise<Client> {
+    if (!this.clientPromise) {
+      this.clientPromise = this.connect().catch((err) => {
+        this.clientPromise = undefined;
+        throw err;
+      });
+    }
+    return this.clientPromise;
+  }
+
+  private async connect(): Promise<Client> {
+    const client = new Client();
     const ready = Promise.withResolvers<void>();
     client.once("ready", () => ready.resolve());
     client.once("error", (err) => ready.reject(err));
     client.once("close", () => {
-      if (this.client === client) {
-        this.client = undefined;
-        this.sftpPromise = undefined;
-      }
+      this.clientPromise = undefined;
+      this.sftpPromise = undefined;
     });
 
     const connectConfig: ConnectConfig = {
@@ -62,15 +96,21 @@ export class SshConnection {
 
     client.connect(connectConfig);
     await ready.promise;
+    return client;
+  }
 
+  private async openSftp(): Promise<SFTPWrapper> {
+    const client = await this.getClient();
     const sftpReady = Promise.withResolvers<SFTPWrapper>();
     client.sftp((err, sftp) => (err ? sftpReady.reject(err) : sftpReady.resolve(sftp)));
     return sftpReady.promise;
   }
 
   dispose(): void {
-    this.client?.end();
-    this.client = undefined;
+    for (const server of this.forwardServers) server.close();
+    this.forwardServers.length = 0;
+    void this.clientPromise?.then((client) => client.end()).catch(() => undefined);
+    this.clientPromise = undefined;
     this.sftpPromise = undefined;
   }
 }

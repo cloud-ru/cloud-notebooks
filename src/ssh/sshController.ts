@@ -1,27 +1,18 @@
-import * as fs from "node:fs";
 import * as vscode from "vscode";
 import type { NotebookHandlerResponse } from "../api/types";
 import type { Logger } from "../util/logger";
 import { CloudruSshFsProvider, SSH_SCHEME } from "./sftpFs";
-import {
-  buildUsername,
-  DEFAULT_SSH_HOST_TEMPLATE,
-  DEFAULT_SSH_PORT,
-  deriveSshHost,
-  parseSshCommand,
-} from "./sshUrl";
-
-const ACCOUNT_ID_KEY = "cloudru.ssh.accountId";
+import type { SshConfig } from "./sshConfig";
 
 /**
- * Orchestrates the SSH file browser: captures the one-time config (private key + account id), mounts a
+ * Orchestrates the SSH file browser: resolves the SSH target via {@link SshConfig} and mounts a
  * notebook's home directory as a workspace folder backed by the SFTP `FileSystemProvider`.
  */
 export class SshController {
   constructor(
     private readonly deps: {
       provider: CloudruSshFsProvider;
-      context: vscode.ExtensionContext;
+      config: SshConfig;
       logger: Logger;
     },
   ) {}
@@ -34,22 +25,9 @@ export class SshController {
       return;
     }
 
-    const privateKey = await this.ensurePrivateKey();
-    if (!privateKey) return;
-    const accountId = await this.ensureAccountId();
-    if (!accountId) return;
-
-    const config = vscode.workspace.getConfiguration("cloudru");
-    const template = config.get<string>("ssh.hostTemplate", DEFAULT_SSH_HOST_TEMPLATE);
-    const port = config.get<number>("ssh.port", DEFAULT_SSH_PORT);
-    const host = deriveSshHost(notebook.url, template);
-    if (!host) {
-      void vscode.window.showErrorMessage(`Could not derive the SSH host from ${notebook.url}.`);
-      return;
-    }
-
-    const username = buildUsername(notebook.name, accountId);
-    this.deps.provider.register(notebook.uid, { host, port, username, privateKey });
+    const target = await this.deps.config.resolveTarget(notebook);
+    if (!target) return;
+    this.deps.provider.register(notebook.uid, target);
 
     try {
       const root = await vscode.window.withProgress(
@@ -58,15 +36,14 @@ export class SshController {
       );
       this.mount(notebook, root);
     } catch (err) {
-      this.deps.logger.error(`SSH connect failed for ${host}`, err);
+      this.deps.logger.error(`SSH connect failed for ${target.host}`, err);
       void vscode.window.showErrorMessage(`SSH connection failed: ${(err as Error).message}`);
     }
   }
 
   /** Re-enter the private key and account id. */
   async configure(): Promise<void> {
-    await this.pickPrivateKey();
-    await this.promptAccountId();
+    await this.deps.config.configure();
   }
 
   private mount(notebook: NotebookHandlerResponse, root: string): void {
@@ -75,66 +52,5 @@ export class SshController {
     vscode.workspace.updateWorkspaceFolders(start, 0, { uri, name: `${notebook.name} (SSH)` });
     void vscode.commands.executeCommand("revealInExplorer", uri);
     this.deps.logger.info(`Mounted ${notebook.name} at ${uri.toString()}`);
-  }
-
-  private async ensurePrivateKey(): Promise<Buffer | undefined> {
-    let path = vscode.workspace.getConfiguration("cloudru").get<string>("ssh.privateKeyPath", "");
-    if (!path) path = (await this.pickPrivateKey()) ?? "";
-    if (!path) return undefined;
-    try {
-      return fs.readFileSync(path);
-    } catch (err) {
-      void vscode.window.showErrorMessage(`Cannot read SSH key at ${path}: ${(err as Error).message}`);
-      return undefined;
-    }
-  }
-
-  private async pickPrivateKey(): Promise<string | undefined> {
-    const picked = await vscode.window.showOpenDialog({
-      title: "Select the ML Space SSH private key (downloaded from the console)",
-      canSelectMany: false,
-      openLabel: "Use this key",
-    });
-    const path = picked?.[0]?.fsPath;
-    if (path) {
-      await vscode.workspace
-        .getConfiguration("cloudru")
-        .update("ssh.privateKeyPath", path, vscode.ConfigurationTarget.Global);
-    }
-    return path;
-  }
-
-  private async ensureAccountId(): Promise<string | undefined> {
-    const stored = this.deps.context.workspaceState.get<string>(ACCOUNT_ID_KEY);
-    if (stored) return stored;
-    return this.promptAccountId();
-  }
-
-  private async promptAccountId(): Promise<string | undefined> {
-    const input = await vscode.window.showInputBox({
-      title: "Cloud.ru SSH — connection command or account id",
-      prompt:
-        "Paste the SSH command from the console (you can drop the “-i <key>” part — the key file you " +
-        "picked is used). Only the account id is read from it. You may also just type the account id.",
-      placeHolder: "ssh name.ai0001905-05529@ssh-a100-jupyter.ai.cloud.ru -p 2222   ·   or just  ai0001905-05529",
-      ignoreFocusOut: true,
-    });
-    if (!input) return undefined;
-
-    const trimmed = input.trim();
-    // Accept a full SSH command, or a bare account id like "ai0001905-05529".
-    const accountId = trimmed.includes("@")
-      ? parseSshCommand(trimmed)?.accountId
-      : /^[A-Za-z]+\d+-\d+$/.test(trimmed)
-        ? trimmed
-        : undefined;
-    if (!accountId) {
-      void vscode.window.showErrorMessage(
-        "Could not read the account id. Paste the full SSH command, or just the id (e.g. ai0001905-05529).",
-      );
-      return undefined;
-    }
-    await this.deps.context.workspaceState.update(ACCOUNT_ID_KEY, accountId);
-    return accountId;
   }
 }
