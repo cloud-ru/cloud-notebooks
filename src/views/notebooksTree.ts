@@ -5,30 +5,41 @@ import type { NotebookHandlerResponse } from "../api/types";
 import type { SessionStore } from "../session/sessionStore";
 import type { Logger } from "../util/logger";
 import { notebookContextValue, presentNotebookStatus } from "../util/notebookStatus";
+import type { FavoritesStore } from "./favoritesStore";
+import {
+  describeFilter,
+  distinctAuthors,
+  filterNotebooks,
+  isFilterActive,
+  type NotebookFilter,
+} from "./notebookFilter";
 
 export interface NotebooksTreeDeps {
   client: MlSpaceApiClient;
   session: SessionStore;
+  favorites: FavoritesStore;
   isSignedIn: () => Promise<boolean>;
   logger: Logger;
 }
 
 /** Tree node carrying the raw notebook so commands can act on it. */
 export class NotebookTreeItem extends vscode.TreeItem {
-  constructor(readonly notebook: NotebookHandlerResponse) {
+  constructor(
+    readonly notebook: NotebookHandlerResponse,
+    readonly favorite: boolean,
+  ) {
     super(notebook.name, vscode.TreeItemCollapsibleState.None);
     const presentation = presentNotebookStatus(notebook.status);
 
     this.id = notebook.uid;
-    this.description = [notebook.imageDisplayName, notebook.instanceType ?? undefined]
-      .filter(Boolean)
-      .join(" · ");
+    const meta = [notebook.imageDisplayName, notebook.instanceType ?? undefined].filter(Boolean).join(" · ");
+    this.description = favorite ? `★ ${meta}` : meta;
     this.iconPath = new vscode.ThemeIcon(
       presentation.icon,
       presentation.color ? new vscode.ThemeColor(presentation.color) : undefined,
     );
-    this.contextValue = notebookContextValue(notebook.status);
-    this.tooltip = buildTooltip(notebook);
+    this.contextValue = notebookContextValue(notebook.status) + (favorite ? ".fav" : "");
+    this.tooltip = buildTooltip(notebook, favorite);
 
     if (presentation.isRunning && notebook.url) {
       this.command = {
@@ -44,10 +55,54 @@ export class NotebooksTreeProvider implements vscode.TreeDataProvider<NotebookTr
   private readonly emitter = new vscode.EventEmitter<void>();
   readonly onDidChangeTreeData = this.emitter.event;
 
+  private filter: NotebookFilter = {};
+  private lastNotebooks: NotebookHandlerResponse[] = [];
+  private view: vscode.TreeView<NotebookTreeItem> | undefined;
+
   constructor(private readonly deps: NotebooksTreeDeps) {}
+
+  /** Wire the TreeView so the active filter can be shown as the view message. */
+  attachView(view: vscode.TreeView<NotebookTreeItem>): void {
+    this.view = view;
+    this.syncFilterIndicators();
+  }
 
   refresh(): void {
     this.emitter.fire();
+  }
+
+  setSearch(value: string | undefined): void {
+    const trimmed = value?.trim();
+    if (trimmed) this.filter.search = trimmed;
+    else delete this.filter.search;
+    this.onFilterChanged();
+  }
+
+  setAuthor(value: string | undefined): void {
+    if (value) this.filter.author = value;
+    else delete this.filter.author;
+    this.onFilterChanged();
+  }
+
+  toggleFavoritesOnly(): void {
+    if (this.filter.favoritesOnly) delete this.filter.favoritesOnly;
+    else this.filter.favoritesOnly = true;
+    this.onFilterChanged();
+  }
+
+  clearFilters(): void {
+    this.filter = {};
+    this.onFilterChanged();
+  }
+
+  /** Distinct authors from the most recent fetch, for the author-filter picker. */
+  authors(): string[] {
+    return distinctAuthors(this.lastNotebooks);
+  }
+
+  async toggleFavorite(uid: string): Promise<void> {
+    await this.deps.favorites.toggle(uid);
+    this.refresh();
   }
 
   getTreeItem(element: NotebookTreeItem): vscode.TreeItem {
@@ -62,8 +117,9 @@ export class NotebooksTreeProvider implements vscode.TreeDataProvider<NotebookTr
     if (!ws) return [];
 
     try {
-      const notebooks = await this.deps.client.listNotebooks(ws);
-      return notebooks.map((nb) => new NotebookTreeItem(nb));
+      this.lastNotebooks = await this.deps.client.listNotebooks(ws);
+      const visible = filterNotebooks(this.lastNotebooks, this.filter, (uid) => this.deps.favorites.has(uid));
+      return visible.map((nb) => new NotebookTreeItem(nb, this.deps.favorites.has(nb.uid)));
     } catch (err) {
       const message = err instanceof ApiError ? err.message : `Failed to load notebooks: ${String(err)}`;
       this.deps.logger.error("listNotebooks failed", err);
@@ -72,15 +128,25 @@ export class NotebooksTreeProvider implements vscode.TreeDataProvider<NotebookTr
     }
   }
 
+  private onFilterChanged(): void {
+    this.syncFilterIndicators();
+    this.refresh();
+  }
+
+  private syncFilterIndicators(): void {
+    if (this.view) this.view.message = describeFilter(this.filter) ?? "";
+    void vscode.commands.executeCommand("setContext", "cloudru.hasFilter", isFilterActive(this.filter));
+  }
+
   dispose(): void {
     this.emitter.dispose();
   }
 }
 
-function buildTooltip(nb: NotebookHandlerResponse): vscode.MarkdownString {
+function buildTooltip(nb: NotebookHandlerResponse, favorite: boolean): vscode.MarkdownString {
   const created = nb.creationTimestamp ? new Date(nb.creationTimestamp * 1000).toLocaleString() : "—";
   const md = new vscode.MarkdownString(undefined, true);
-  md.appendMarkdown(`**${nb.name}**\n\n`);
+  md.appendMarkdown(`**${nb.name}**${favorite ? " ★" : ""}\n\n`);
   md.appendMarkdown(`- Status: \`${nb.status}\`\n`);
   md.appendMarkdown(`- Image: ${nb.imageDisplayName}\n`);
   md.appendMarkdown(`- Instance: ${nb.instanceType ?? "—"}\n`);

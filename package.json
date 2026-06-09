@@ -101,41 +101,101 @@
         "command": "cloudru.openNotebookInBrowser",
         "title": "Cloud.ru: Open Notebook in Browser",
         "icon": "$(link-external)"
+      },
+      {
+        "command": "cloudru.searchNotebooks",
+        "title": "Cloud.ru: Search Notebooks by Name",
+        "icon": "$(search)"
+      },
+      {
+        "command": "cloudru.filterByAuthor",
+        "title": "Cloud.ru: Filter Notebooks by Author",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "cloudru.toggleFavoritesFilter",
+        "title": "Cloud.ru: Toggle Favorites Only",
+        "icon": "$(star)"
+      },
+      {
+        "command": "cloudru.clearFilters",
+        "title": "Cloud.ru: Clear Filters",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "cloudru.addFavorite",
+        "title": "Cloud.ru: Add to Favorites",
+        "icon": "$(star-empty)"
+      },
+      {
+        "command": "cloudru.removeFavorite",
+        "title": "Cloud.ru: Remove from Favorites",
+        "icon": "$(star-full)"
       }
     ],
     "menus": {
       "view/title": [
         {
-          "command": "cloudru.refreshNotebooks",
+          "command": "cloudru.searchNotebooks",
           "when": "view == cloudruNotebooks && cloudru.authenticated",
           "group": "navigation@1"
         },
         {
-          "command": "cloudru.selectWorkspace",
+          "command": "cloudru.filterByAuthor",
           "when": "view == cloudruNotebooks && cloudru.authenticated",
           "group": "navigation@2"
         },
         {
-          "command": "cloudru.signOut",
+          "command": "cloudru.toggleFavoritesFilter",
           "when": "view == cloudruNotebooks && cloudru.authenticated",
           "group": "navigation@3"
+        },
+        {
+          "command": "cloudru.clearFilters",
+          "when": "view == cloudruNotebooks && cloudru.hasFilter",
+          "group": "navigation@4"
+        },
+        {
+          "command": "cloudru.refreshNotebooks",
+          "when": "view == cloudruNotebooks && cloudru.authenticated",
+          "group": "navigation@5"
+        },
+        {
+          "command": "cloudru.selectWorkspace",
+          "when": "view == cloudruNotebooks && cloudru.authenticated",
+          "group": "overflow@1"
+        },
+        {
+          "command": "cloudru.signOut",
+          "when": "view == cloudruNotebooks && cloudru.authenticated",
+          "group": "overflow@2"
         }
       ],
       "view/item/context": [
         {
           "command": "cloudru.openNotebook",
-          "when": "view == cloudruNotebooks && viewItem == notebook.running",
+          "when": "view == cloudruNotebooks && viewItem =~ /^notebook\\.running/",
           "group": "inline@1"
         },
         {
           "command": "cloudru.openNotebookFiles",
-          "when": "view == cloudruNotebooks && viewItem == notebook.running",
+          "when": "view == cloudruNotebooks && viewItem =~ /^notebook\\.running/",
           "group": "inline@2"
+        },
+        {
+          "command": "cloudru.addFavorite",
+          "when": "view == cloudruNotebooks && viewItem =~ /^notebook/ && !(viewItem =~ /\\.fav$/)",
+          "group": "inline@3"
+        },
+        {
+          "command": "cloudru.removeFavorite",
+          "when": "view == cloudruNotebooks && viewItem =~ /\\.fav$/",
+          "group": "inline@3"
         },
         {
           "command": "cloudru.openNotebookInBrowser",
           "when": "view == cloudruNotebooks && viewItem =~ /^notebook/",
-          "group": "inline@3"
+          "group": "context@1"
         }
       ]
     },

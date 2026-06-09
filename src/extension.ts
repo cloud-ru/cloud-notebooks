@@ -5,6 +5,7 @@ import { registerCommands } from "./commands";
 import { SessionStore } from "./session/sessionStore";
 import { Logger } from "./util/logger";
 import { NotebooksTreeProvider } from "./views/notebooksTree";
+import { FavoritesStore } from "./views/favoritesStore";
 import { NotebookViewController } from "./jupyter/notebookController";
 import { CloudruSshFsProvider, SSH_SCHEME } from "./ssh/sftpFs";
 import { SshController } from "./ssh/sshController";
@@ -34,16 +35,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(session);
   await session.restore();
 
+  const favorites = new FavoritesStore(context.globalState);
   const tree = new NotebooksTreeProvider({
     client,
     session,
+    favorites,
     isSignedIn: () => auth.isSignedIn(),
     logger,
   });
   context.subscriptions.push(tree);
-  context.subscriptions.push(
-    vscode.window.createTreeView("cloudruNotebooks", { treeDataProvider: tree }),
-  );
+  const notebooksView = vscode.window.createTreeView("cloudruNotebooks", { treeDataProvider: tree });
+  context.subscriptions.push(notebooksView);
+  tree.attachView(notebooksView);
 
   const notebooks = new NotebookViewController({ secrets: context.secrets, context, logger });
   context.subscriptions.push(notebooks);
