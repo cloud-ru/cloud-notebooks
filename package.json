@@ -29,6 +29,9 @@
   "activationEvents": [
     "onView:cloudruNotebooks"
   ],
+  "extensionDependencies": [
+    "ms-toolsai.jupyter"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "viewsContainers": {
@@ -89,39 +92,123 @@
         "icon": "$(notebook)"
       },
       {
+        "command": "cloudru.openNotebookFiles",
+        "title": "Cloud.ru: Browse Notebook Files (SSH)",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "cloudru.openFullIde",
+        "title": "Cloud.ru: Open Full IDE (Remote-SSH)",
+        "icon": "$(remote-explorer)"
+      },
+      {
+        "command": "cloudru.configureSsh",
+        "title": "Cloud.ru: Configure SSH (key & account)"
+      },
+      {
         "command": "cloudru.openNotebookInBrowser",
         "title": "Cloud.ru: Open Notebook in Browser",
         "icon": "$(link-external)"
+      },
+      {
+        "command": "cloudru.searchNotebooks",
+        "title": "Cloud.ru: Search Notebooks by Name",
+        "icon": "$(search)"
+      },
+      {
+        "command": "cloudru.filterByAuthor",
+        "title": "Cloud.ru: Filter Notebooks by Author",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "cloudru.toggleFavoritesFilter",
+        "title": "Cloud.ru: Toggle Favorites Only",
+        "icon": "$(star)"
+      },
+      {
+        "command": "cloudru.clearFilters",
+        "title": "Cloud.ru: Clear Filters",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "cloudru.addFavorite",
+        "title": "Cloud.ru: Add to Favorites",
+        "icon": "$(star-empty)"
+      },
+      {
+        "command": "cloudru.removeFavorite",
+        "title": "Cloud.ru: Remove from Favorites",
+        "icon": "$(star-full)"
       }
     ],
     "menus": {
       "view/title": [
         {
-          "command": "cloudru.refreshNotebooks",
+          "command": "cloudru.searchNotebooks",
           "when": "view == cloudruNotebooks && cloudru.authenticated",
           "group": "navigation@1"
         },
         {
-          "command": "cloudru.selectWorkspace",
+          "command": "cloudru.filterByAuthor",
           "when": "view == cloudruNotebooks && cloudru.authenticated",
           "group": "navigation@2"
         },
         {
-          "command": "cloudru.signOut",
+          "command": "cloudru.toggleFavoritesFilter",
           "when": "view == cloudruNotebooks && cloudru.authenticated",
           "group": "navigation@3"
+        },
+        {
+          "command": "cloudru.clearFilters",
+          "when": "view == cloudruNotebooks && cloudru.hasFilter",
+          "group": "navigation@4"
+        },
+        {
+          "command": "cloudru.refreshNotebooks",
+          "when": "view == cloudruNotebooks && cloudru.authenticated",
+          "group": "navigation@5"
+        },
+        {
+          "command": "cloudru.selectWorkspace",
+          "when": "view == cloudruNotebooks && cloudru.authenticated",
+          "group": "overflow@1"
+        },
+        {
+          "command": "cloudru.signOut",
+          "when": "view == cloudruNotebooks && cloudru.authenticated",
+          "group": "overflow@2"
         }
       ],
       "view/item/context": [
         {
           "command": "cloudru.openNotebook",
-          "when": "view == cloudruNotebooks && viewItem == notebook.running",
+          "when": "view == cloudruNotebooks && viewItem =~ /^notebook\\.running/",
           "group": "inline@1"
+        },
+        {
+          "command": "cloudru.openFullIde",
+          "when": "view == cloudruNotebooks && viewItem =~ /^notebook\\.running/",
+          "group": "inline@2"
+        },
+        {
+          "command": "cloudru.openNotebookFiles",
+          "when": "view == cloudruNotebooks && viewItem =~ /^notebook\\.running/",
+          "group": "inline@3"
+        },
+        {
+          "command": "cloudru.addFavorite",
+          "when": "view == cloudruNotebooks && viewItem =~ /^notebook/ && !(viewItem =~ /\\.fav$/)",
+          "group": "inline@4"
+        },
+        {
+          "command": "cloudru.removeFavorite",
+          "when": "view == cloudruNotebooks && viewItem =~ /\\.fav$/",
+          "group": "inline@4"
         },
         {
           "command": "cloudru.openNotebookInBrowser",
           "when": "view == cloudruNotebooks && viewItem =~ /^notebook/",
-          "group": "inline@2"
+          "group": "context@1"
         }
       ]
     },
@@ -142,6 +229,21 @@
           "type": "boolean",
           "default": true,
           "description": "Verify the notebook server's TLS certificate. The shim trusts the system CA store by default; disable only on isolated networks where verification cannot be satisfied."
+        },
+        "cloudru.ssh.privateKeyPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the ML Space SSH private key (downloaded from the console SSH dialog). Used to browse notebook files over SFTP."
+        },
+        "cloudru.ssh.hostTemplate": {
+          "type": "string",
+          "default": "ssh-{pool}-jupyter.ai.cloud.ru",
+          "description": "SSH gateway host template; {pool} is derived from the notebook (e.g. a100). Override for other regions."
+        },
+        "cloudru.ssh.port": {
+          "type": "number",
+          "default": 2222,
+          "description": "SSH gateway port."
         }
       }
     }
@@ -158,12 +260,15 @@
   },
   "dependencies": {
     "http-proxy": "^1.18.1",
-    "puppeteer-core": "^22.15.0"
+    "puppeteer-core": "^22.15.0",
+    "ssh2": "^1.15.0"
   },
   "devDependencies": {
     "@types/http-proxy": "^1.17.14",
     "@types/node": "^20.14.0",
+    "@types/ssh2": "^1.15.0",
     "@types/vscode": "^1.90.0",
+    "@vscode/jupyter-extension": "^1.1.1",
     "esbuild": "^0.21.5",
     "typescript": "^5.4.5",
     "vitest": "^1.6.0"
