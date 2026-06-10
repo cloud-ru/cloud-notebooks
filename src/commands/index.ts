@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { ApiError } from "../api/errors";
 import type { WorkspaceContext } from "../api/types";
-import type { ConsoleApiClient } from "../console/apiClient";
+import type { ConsoleApiClient, ConsoleWorkspace } from "../console/apiClient";
 import type { ConsoleTokenProvider } from "../console/tokenProvider";
 import { buildResumeBody } from "../console/resumeBody";
 import type { SessionStore } from "../session/sessionStore";
@@ -30,7 +30,7 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
     run("cloudru.signIn", async () => {
       const ok = await auth.signIn();
       if (!ok) return;
-      if (!session.get()) await selectWorkspace(session);
+      if (!session.get()) await selectWorkspace(client, session);
       tree.refresh();
     }),
 
@@ -45,7 +45,7 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
         void vscode.window.showWarningMessage("Sign in to Cloud.ru first.");
         return;
       }
-      await selectWorkspace(session);
+      await selectWorkspace(client, session);
       tree.refresh();
     }),
 
@@ -151,13 +151,48 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
   ];
 }
 
-/** Console mode: capture the workspace id (x-workspace-id) and persist it. */
-async function selectWorkspace(session: SessionStore): Promise<void> {
-  const current = session.get();
+/** Fetch the user's workspaces and persist the chosen one (its id becomes the x-workspace-id header). */
+async function selectWorkspace(client: ConsoleApiClient, session: SessionStore): Promise<void> {
+  let workspaces: ConsoleWorkspace[];
+  try {
+    workspaces = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: "Loading Cloud.ru workspaces…" },
+      () => client.listWorkspaces(),
+    );
+  } catch {
+    await enterWorkspaceIdManually(session);
+    return;
+  }
+  if (workspaces.length === 0) {
+    void vscode.window.showWarningMessage("No Cloud.ru workspaces are available for this account.");
+    return;
+  }
+
+  const chosen = workspaces.length === 1 ? workspaces[0] : await pickWorkspace(workspaces);
+  if (!chosen) return;
+  await session.set({ workspaceId: chosen.workspace_id, workspaceName: chosen.workspace_name });
+  void vscode.window.showInformationMessage(`Cloud.ru workspace: ${chosen.workspace_name}`);
+}
+
+async function pickWorkspace(workspaces: ConsoleWorkspace[]): Promise<ConsoleWorkspace | undefined> {
+  const picked = await vscode.window.showQuickPick(
+    workspaces.map((ws) => ({
+      label: ws.workspace_name,
+      ...(ws.project_name ? { description: ws.project_name } : {}),
+      ...(ws.email ? { detail: ws.email } : {}),
+      ws,
+    })),
+    { title: "Select Cloud.ru workspace", matchOnDescription: true, ignoreFocusOut: true },
+  );
+  return picked?.ws;
+}
+
+/** Fallback when the workspaces endpoint is unreachable: let the user paste the id by hand. */
+async function enterWorkspaceIdManually(session: SessionStore): Promise<void> {
   const input = await vscode.window.showInputBox({
     title: "Cloud.ru workspace",
-    prompt: "Paste your workspace id (x-workspace-id) — from the console URL or developer params.",
-    value: current?.workspaceId ?? "",
+    prompt: "Could not load the workspace list. Paste your workspace id (x-workspace-id).",
+    value: session.get()?.workspaceId ?? "",
     ignoreFocusOut: true,
     validateInput: (v) => (v.trim() ? undefined : "Workspace id is required"),
   });

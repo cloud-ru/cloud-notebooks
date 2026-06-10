@@ -7,6 +7,16 @@ import { type ConsoleNotebooksResponse, mapConsoleNotebook } from "./notebookMap
 
 const NAMESPACE_HEADER = "cp-front-mlspace-env-jupyter-server";
 
+/** Workspace list item from GET /user/v1/workspaces/ (console "switcher" list). */
+export interface ConsoleWorkspace {
+  workspace_id: string;
+  workspace_name: string;
+  namespace?: string;
+  project_name?: string;
+  email?: string;
+  workspace_status?: string;
+}
+
 export interface ConsoleApiClientOptions {
   /** Console UI backend base, e.g. https://console.cloud.ru/aicloud/ui */
   baseUrl: string;
@@ -23,6 +33,12 @@ export class ConsoleApiClient {
     this.baseUrl = opts.baseUrl.replace(/\/+$/, "");
     this.getToken = opts.getToken;
     this.fetchImpl = opts.fetchImpl ?? globalThis.fetch.bind(globalThis);
+  }
+
+  /** Workspaces the signed-in user can access (no x-workspace-id — this is the bootstrap call). */
+  async listWorkspaces(): Promise<ConsoleWorkspace[]> {
+    const res = await this.request<ConsoleWorkspace[]>("GET", "/user/v1/workspaces/", undefined);
+    return Array.isArray(res) ? res : [];
   }
 
   async listNotebooks(ws: WorkspaceContext): Promise<NotebookHandlerResponse[]> {
@@ -50,16 +66,16 @@ export class ConsoleApiClient {
   private async request<T>(
     method: "GET" | "POST",
     path: string,
-    workspaceId: string,
+    workspaceId: string | undefined,
     body?: unknown,
   ): Promise<T> {
     const token = await this.getToken();
     const headers: Record<string, string> = {
       Accept: "application/json",
       Authorization: `Bearer ${token}`,
-      "x-workspace-id": workspaceId,
       "front-initiator-namespace": NAMESPACE_HEADER,
     };
+    if (workspaceId) headers["x-workspace-id"] = workspaceId;
     const init: RequestInit = { method, headers };
     if (body !== undefined) {
       headers["Content-Type"] = "application/json";
