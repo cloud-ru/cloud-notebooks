@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ConsoleApiClient } from "../../src/console/apiClient";
+import type { HttpFetch } from "../../src/console/consoleHttp";
 
 interface Captured {
   url: string;
@@ -7,20 +8,16 @@ interface Captured {
   headers: Record<string, string>;
 }
 
-function routedFetch(body: unknown, captured: Captured[]): typeof fetch {
-  return (async (input: RequestInfo | URL, init?: RequestInit) => {
-    captured.push({
-      url: String(input),
-      method: init?.method ?? "GET",
-      headers: { ...((init?.headers as Record<string, string>) ?? {}) },
-    });
+function routedFetch(body: unknown, captured: Captured[]): HttpFetch {
+  return async (url, init) => {
+    captured.push({ url, method: init.method, headers: { ...init.headers } });
     return {
       ok: true,
       status: 200,
       headers: { get: () => null },
       text: async () => JSON.stringify(body),
-    } as unknown as Response;
-  }) as unknown as typeof fetch;
+    };
+  };
 }
 
 function makeClient(body: unknown, captured: Captured[]): ConsoleApiClient {
