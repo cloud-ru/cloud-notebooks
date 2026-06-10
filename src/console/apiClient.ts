@@ -1,8 +1,10 @@
 // Client for the Cloud.ru console UI backend (console.cloud.ru/aicloud/ui) — the same API the web app
-// uses. Authenticated with an OIDC Bearer (+ x-workspace-id for workspace-scoped calls). No `vscode`
-// import → unit-testable with an injected fetch.
+// uses. Authenticated with an OIDC Bearer (+ x-workspace-id for workspace-scoped calls). Requests go
+// through `consoleFetch` (system-CA-trusting https) rather than the global fetch, which fails behind a
+// corporate TLS-inspection proxy. No `vscode` import → unit-testable with an injected fetch.
 import { ApiError, apiErrorFromResponse } from "../api/errors";
 import type { NotebookHandlerResponse, WorkspaceContext } from "../api/types";
+import { consoleFetch, type HttpFetch, type HttpResponse } from "./consoleHttp";
 import { type ConsoleNotebooksResponse, mapConsoleNotebook } from "./notebookMapping";
 
 const NAMESPACE_HEADER = "cp-front-mlspace-env-jupyter-server";
@@ -22,18 +24,19 @@ export interface ConsoleApiClientOptions {
   /** Console UI backend base, e.g. https://console.cloud.ru/aicloud/ui */
   baseUrl: string;
   getToken: () => Promise<string>;
-  fetchImpl?: typeof fetch;
+  /** Injected for tests; defaults to the system-CA-trusting https client. */
+  fetchImpl?: HttpFetch;
 }
 
 export class ConsoleApiClient {
   private readonly baseUrl: string;
   private readonly getToken: () => Promise<string>;
-  private readonly fetchImpl: typeof fetch;
+  private readonly fetchImpl: HttpFetch;
 
   constructor(opts: ConsoleApiClientOptions) {
     this.baseUrl = opts.baseUrl.replace(/\/+$/, "");
     this.getToken = opts.getToken;
-    this.fetchImpl = opts.fetchImpl ?? globalThis.fetch.bind(globalThis);
+    this.fetchImpl = opts.fetchImpl ?? consoleFetch;
   }
 
   /** All workspaces the signed-in user belongs to. Bootstrap call — no x-workspace-id. */
@@ -77,17 +80,18 @@ export class ConsoleApiClient {
       "front-initiator-namespace": NAMESPACE_HEADER,
     };
     if (opts.workspaceId) headers["x-workspace-id"] = opts.workspaceId;
-    const init: RequestInit = { method, headers };
+    const init: { method: string; headers: Record<string, string>; body?: string } = { method, headers };
     if (opts.body !== undefined) {
       headers["Content-Type"] = "application/json";
       init.body = JSON.stringify(opts.body);
     }
 
-    let response: Response;
+    let response: HttpResponse;
     try {
       response = await this.fetchImpl(url, init);
     } catch (cause) {
-      throw new ApiError("network", `Network error contacting the Cloud.ru console: ${String(cause)}`);
+      const detail = (cause as { cause?: unknown })?.cause ?? cause;
+      throw new ApiError("network", `Network error contacting the Cloud.ru console: ${String(detail)}`);
     }
 
     const raw = await response.text();
