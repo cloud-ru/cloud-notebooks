@@ -4,8 +4,8 @@ import type { WorkspaceContext } from "../api/types";
 const WORKSPACE_SECRET_KEY = "cloudru.workspace";
 
 /**
- * Holds the active workspace context (workspace id, namespace, x-api-key). Persisted in
- * SecretStorage because the x-api-key is sensitive.
+ * Holds the active workspace selection (`x-workspace-id` + display name). Persisted in SecretStorage
+ * so it survives restarts.
  */
 export class SessionStore {
   private current: WorkspaceContext | undefined;
