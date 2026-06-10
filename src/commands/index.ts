@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { ApiError } from "../api/errors";
 import type { WorkspaceContext } from "../api/types";
-import type { ConsoleApiClient, ConsoleWorkspace } from "../console/apiClient";
+import type { ConsoleApiClient, ConsoleCustomer, ConsoleProject, ConsoleWorkspace } from "../console/apiClient";
 import type { ConsoleTokenProvider } from "../console/tokenProvider";
 import { buildResumeBody } from "../console/resumeBody";
 import type { SessionStore } from "../session/sessionStore";
@@ -151,36 +151,73 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
   ];
 }
 
-/** Fetch the user's workspaces and persist the chosen one (its id becomes the x-workspace-id header). */
+/**
+ * Console workspace selection mirrors the web app: customer → project → workspace. The chosen
+ * workspace id becomes the x-workspace-id header. Falls back to manual id entry if the API is
+ * unreachable.
+ */
 async function selectWorkspace(client: ConsoleApiClient, session: SessionStore, logger: Logger): Promise<void> {
-  let workspaces: ConsoleWorkspace[];
   try {
-    workspaces = await vscode.window.withProgress(
-      { location: vscode.ProgressLocation.Notification, title: "Loading Cloud.ru workspaces…" },
-      () => client.listWorkspaces(),
-    );
-  } catch (err) {
-    logger.error("Failed to load Cloud.ru workspaces", err);
-    await enterWorkspaceIdManually(session, err);
-    return;
-  }
-  if (workspaces.length === 0) {
-    void vscode.window.showWarningMessage("No Cloud.ru workspaces are available for this account.");
-    return;
-  }
+    const customers = await withLoading("Loading Cloud.ru organisations…", () => client.listCustomers());
+    if (customers.length === 0) {
+      void vscode.window.showWarningMessage("No Cloud.ru organisations are available for this account.");
+      return;
+    }
+    const customer = customers.length === 1 ? customers[0] : await pickCustomer(customers);
+    if (!customer) return;
 
-  const chosen = workspaces.length === 1 ? workspaces[0] : await pickWorkspace(workspaces);
-  if (!chosen) return;
-  await session.set({ workspaceId: chosen.workspace_id, workspaceName: chosen.workspace_name });
-  void vscode.window.showInformationMessage(`Cloud.ru workspace: ${chosen.workspace_name}`);
+    const projects = await withLoading("Loading projects…", () => client.listProjects(customer.id));
+    if (projects.length === 0) {
+      void vscode.window.showWarningMessage(`No projects in “${customer.name}”.`);
+      return;
+    }
+    const project = projects.length === 1 ? projects[0] : await pickProject(projects);
+    if (!project) return;
+
+    const workspaces = await withLoading("Loading workspaces…", () =>
+      client.searchWorkspaces(customer.id, project.id),
+    );
+    if (workspaces.length === 0) {
+      void vscode.window.showWarningMessage(`No active workspaces in “${project.name}”.`);
+      return;
+    }
+    const workspace = workspaces.length === 1 ? workspaces[0] : await pickWorkspace(workspaces);
+    if (!workspace) return;
+
+    await session.set({ workspaceId: workspace.id, workspaceName: workspace.name });
+    void vscode.window.showInformationMessage(`Cloud.ru workspace: ${workspace.name}`);
+  } catch (err) {
+    logger.error("Failed to select Cloud.ru workspace", err);
+    await enterWorkspaceIdManually(session, err);
+  }
+}
+
+function withLoading<T>(title: string, work: () => Promise<T>): Thenable<T> {
+  return vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title }, work);
+}
+
+async function pickCustomer(customers: ConsoleCustomer[]): Promise<ConsoleCustomer | undefined> {
+  const picked = await vscode.window.showQuickPick(
+    customers.map((c) => ({ label: c.name, c })),
+    { title: "Select Cloud.ru organisation", ignoreFocusOut: true },
+  );
+  return picked?.c;
+}
+
+async function pickProject(projects: ConsoleProject[]): Promise<ConsoleProject | undefined> {
+  const picked = await vscode.window.showQuickPick(
+    projects.map((p) => ({ label: p.name, ...(p.folder ? { description: p.folder } : {}), p })),
+    { title: "Select Cloud.ru project", matchOnDescription: true, ignoreFocusOut: true },
+  );
+  return picked?.p;
 }
 
 async function pickWorkspace(workspaces: ConsoleWorkspace[]): Promise<ConsoleWorkspace | undefined> {
   const picked = await vscode.window.showQuickPick(
     workspaces.map((ws) => ({
-      label: ws.workspace_name,
+      label: ws.name,
       ...(ws.project_name ? { description: ws.project_name } : {}),
-      ...(ws.email ? { detail: ws.email } : {}),
+      ...(ws.namespace ? { detail: ws.namespace } : {}),
       ws,
     })),
     { title: "Select Cloud.ru workspace", matchOnDescription: true, ignoreFocusOut: true },
