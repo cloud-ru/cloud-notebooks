@@ -1,35 +1,21 @@
-// Client for the Cloud.ru console UI backend — the same API the web app uses. Workspace selection
-// mirrors the console flow: customer → project → workspace. Notebook data lives under
-// `<origin>/aicloud/ui`; the customer/project bootstrap lives under `<origin>/u-api/bff-console`.
-// Authenticated with an OIDC Bearer (+ x-workspace-id for workspace-scoped calls). No `vscode` import
-// → unit-testable with an injected fetch.
+// Client for the Cloud.ru console UI backend (console.cloud.ru/aicloud/ui) — the same API the web app
+// uses. Authenticated with an OIDC Bearer (+ x-workspace-id for workspace-scoped calls). No `vscode`
+// import → unit-testable with an injected fetch.
 import { ApiError, apiErrorFromResponse } from "../api/errors";
 import type { NotebookHandlerResponse, WorkspaceContext } from "../api/types";
 import { type ConsoleNotebooksResponse, mapConsoleNotebook } from "./notebookMapping";
 
 const NAMESPACE_HEADER = "cp-front-mlspace-env-jupyter-server";
 
-/** A customer (organisation) the signed-in user belongs to. */
-export interface ConsoleCustomer {
-  id: string;
-  name: string;
-}
-
-/** A project within a customer (flattened out of the folder tree). */
-export interface ConsoleProject {
-  id: string;
-  name: string;
-  /** Owning folder name, for display only. */
-  folder?: string;
-}
-
-/** A workspace from POST /organisation/v2/workspaces/search. Its `id` is the x-workspace-id header. */
+/** Workspace list item from GET /user/v1/workspaces/ — the console "switcher" list (flat, all of the
+ * user's workspaces). `workspace_id` becomes the x-workspace-id header. */
 export interface ConsoleWorkspace {
-  id: string;
-  name: string;
+  workspace_id: string;
+  workspace_name: string;
+  workspace_status?: string;
   namespace?: string;
   project_name?: string;
-  status?: string;
+  email?: string;
 }
 
 export interface ConsoleApiClientOptions {
@@ -41,64 +27,19 @@ export interface ConsoleApiClientOptions {
 
 export class ConsoleApiClient {
   private readonly baseUrl: string;
-  /** Scheme + host of the console, e.g. https://console.cloud.ru (for the /u-api/bff-console calls). */
-  private readonly origin: string;
   private readonly getToken: () => Promise<string>;
   private readonly fetchImpl: typeof fetch;
 
   constructor(opts: ConsoleApiClientOptions) {
     this.baseUrl = opts.baseUrl.replace(/\/+$/, "");
-    this.origin = new URL(this.baseUrl).origin;
     this.getToken = opts.getToken;
     this.fetchImpl = opts.fetchImpl ?? globalThis.fetch.bind(globalThis);
   }
 
-  /** Customers (organisations) the signed-in user belongs to. Bootstrap call — no x-workspace-id. */
-  async listCustomers(): Promise<ConsoleCustomer[]> {
-    const res = await this.send<{ customers?: Array<{ id: string; name?: string; full_name?: string }> }>(
-      "GET",
-      `${this.origin}/u-api/bff-console/v2/customers/me`,
-      {},
-    );
-    return (res.customers ?? []).map((c) => ({ id: c.id, name: c.name ?? c.full_name ?? c.id }));
-  }
-
-  /** Projects within a customer, flattened out of the folder tree. */
-  async listProjects(customerId: string): Promise<ConsoleProject[]> {
-    const res = await this.send<{
-      folders?: Array<{ name?: string; projects?: Array<{ id: string; name: string }> }>;
-    }>(
-      "GET",
-      `${this.origin}/u-api/bff-console/v1/simple-projects?customerId=${encodeURIComponent(customerId)}`,
-      {},
-    );
-    const projects: ConsoleProject[] = [];
-    for (const folder of res.folders ?? []) {
-      for (const project of folder.projects ?? []) {
-        projects.push({ id: project.id, name: project.name, ...(folder.name ? { folder: folder.name } : {}) });
-      }
-    }
-    return projects;
-  }
-
-  /** Active workspaces in a project (the console "workspace switcher" list, scoped by project). */
-  async searchWorkspaces(customerId: string, projectId: string): Promise<ConsoleWorkspace[]> {
-    const res = await this.send<{ workspaces?: ConsoleWorkspace[] }>(
-      "POST",
-      `${this.baseUrl}/organisation/v2/workspaces/search`,
-      {
-        body: {
-          customer_id: customerId,
-          project_id: projectId,
-          page: 1,
-          page_size: 200,
-          query: "",
-          sort_desc: true,
-          status: "active",
-        },
-      },
-    );
-    return res.workspaces ?? [];
+  /** All workspaces the signed-in user belongs to. Bootstrap call — no x-workspace-id. */
+  async listWorkspaces(): Promise<ConsoleWorkspace[]> {
+    const res = await this.send<ConsoleWorkspace[]>("GET", `${this.baseUrl}/user/v1/workspaces/`, {});
+    return Array.isArray(res) ? res : [];
   }
 
   async listNotebooks(ws: WorkspaceContext): Promise<NotebookHandlerResponse[]> {
