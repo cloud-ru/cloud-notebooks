@@ -70,11 +70,8 @@ export class NotebookViewController {
       const appPath = await this.probeAppPath(localPort, [labPath(prefix), "/"]);
       const shim = new NotebookShim({
         origin: `http://127.0.0.1:${localPort}`,
-        getSessionCookie: () => "",
-        onAuthExpired: () => undefined,
         onError: (err) => this.deps.logger.error(`Notebook shim error for ${notebook.name}`, err),
         onTrace: (method, url, status) => this.deps.logger.info(`shim ${status} ${method} ${url}`),
-        tlsVerify: true,
       });
       await shim.start();
       const entry = { shim, appPath };

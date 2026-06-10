@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  mergeCookieHeader,
   removeFrameAncestors,
   rewriteSetCookieForLocalhost,
   stripFramingHeaders,
@@ -47,22 +46,6 @@ describe("stripFramingHeaders", () => {
     };
     stripFramingHeaders(headers);
     expect(headers["content-security-policy"]).toEqual(["default-src 'self'"]);
-  });
-});
-
-describe("mergeCookieHeader", () => {
-  it("prepends the session cookie and keeps unrelated forwarded cookies", () => {
-    const merged = mergeCookieHeader("theme=dark; foo=bar", "authservice_session=abc");
-    expect(merged).toBe("authservice_session=abc; theme=dark; foo=bar");
-  });
-
-  it("session cookie overrides a duplicate forwarded name", () => {
-    const merged = mergeCookieHeader("authservice_session=stale; x=1", "authservice_session=fresh");
-    expect(merged).toBe("authservice_session=fresh; x=1");
-  });
-
-  it("works with no forwarded cookies", () => {
-    expect(mergeCookieHeader(undefined, "authservice_session=abc")).toBe("authservice_session=abc");
   });
 });
 

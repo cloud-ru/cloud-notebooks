@@ -250,11 +250,6 @@
           "default": "",
           "description": "Path to a Chrome/Chromium/Edge executable used for the one-time notebook sign-in. Leave empty to auto-detect."
         },
-        "cloudru.notebook.tlsVerify": {
-          "type": "boolean",
-          "default": true,
-          "description": "Verify the notebook server's TLS certificate. The shim trusts the system CA store by default; disable only on isolated networks where verification cannot be satisfied."
-        },
         "cloudru.ssh.privateKeyPath": {
           "type": "string",
           "default": "",
