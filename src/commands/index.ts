@@ -1,8 +1,9 @@
 import * as vscode from "vscode";
 import { ApiError } from "../api/errors";
-import type { MlSpaceApiClient } from "../api/mlspaceClient";
-import type { Workspace, WorkspaceContext } from "../api/types";
-import type { AuthService } from "../auth/authService";
+import type { WorkspaceContext } from "../api/types";
+import type { ConsoleApiClient, ConsoleWorkspace } from "../console/apiClient";
+import type { ConsoleTokenProvider } from "../console/tokenProvider";
+import { buildResumeBody } from "../console/resumeBody";
 import type { SessionStore } from "../session/sessionStore";
 import type { Logger } from "../util/logger";
 import type { NotebookTreeItem, NotebooksTreeProvider } from "../views/notebooksTree";
@@ -10,8 +11,8 @@ import type { NotebookViewController } from "../jupyter/notebookController";
 import type { SshController } from "../ssh/sshController";
 
 export interface CommandDeps {
-  auth: AuthService;
-  client: MlSpaceApiClient;
+  auth: ConsoleTokenProvider;
+  client: ConsoleApiClient;
   session: SessionStore;
   tree: NotebooksTreeProvider;
   notebooks: NotebookViewController;
@@ -29,7 +30,7 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
     run("cloudru.signIn", async () => {
       const ok = await auth.signIn();
       if (!ok) return;
-      if (!session.get()) await selectWorkspace(client, session);
+      if (!session.get()) await selectWorkspace(client, session, logger);
       tree.refresh();
     }),
 
@@ -44,7 +45,7 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
         void vscode.window.showWarningMessage("Sign in to Cloud.ru first.");
         return;
       }
-      await selectWorkspace(client, session);
+      await selectWorkspace(client, session, logger);
       tree.refresh();
     }),
 
@@ -111,6 +112,27 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
       await ssh.openFullIde(item.notebook);
     }),
 
+    run("cloudru.pauseNotebook", async (...args: unknown[]) => {
+      const item = args[0] as NotebookTreeItem | undefined;
+      const ws = session.get();
+      if (!item || !ws) return;
+      await client.pauseNotebook(ws, item.notebook.uid);
+      await pollUntil(client, ws, item.notebook.uid, tree, (s) => s.startsWith("paused"), `Pausing ${item.notebook.name}…`, 120_000);
+    }),
+
+    run("cloudru.resumeNotebook", async (...args: unknown[]) => {
+      const item = args[0] as NotebookTreeItem | undefined;
+      const ws = session.get();
+      if (!item || !ws) return;
+      const { namespace, name } = item.notebook;
+      if (!namespace) {
+        void vscode.window.showErrorMessage(`Cannot resume “${name}”: missing namespace.`);
+        return;
+      }
+      await client.resumeNotebook(ws, namespace, buildResumeBody(item.notebook));
+      await pollUntil(client, ws, item.notebook.uid, tree, (s) => s === "running", `Starting ${name}…`, 300_000);
+    }),
+
     run("cloudru.configureSsh", async () => {
       await ssh.configure();
     }),
@@ -129,62 +151,100 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
   ];
 }
 
-/** Workspace picker: list workspaces, resolve x-api-key, persist the selection. */
-async function selectWorkspace(client: MlSpaceApiClient, session: SessionStore): Promise<void> {
-  const workspaces = await client.listWorkspaces();
+/**
+ * Console workspace selection: pick from the user's workspaces (the chosen id becomes the
+ * x-workspace-id header). Falls back to manual id entry if the list cannot be loaded.
+ */
+async function selectWorkspace(client: ConsoleApiClient, session: SessionStore, logger: Logger): Promise<void> {
+  let workspaces: ConsoleWorkspace[];
+  try {
+    workspaces = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: "Loading Cloud.ru workspaces…" },
+      () => client.listWorkspaces(),
+    );
+  } catch (err) {
+    logger.error("Failed to load Cloud.ru workspaces", err);
+    await enterWorkspaceIdManually(session, err);
+    return;
+  }
   if (workspaces.length === 0) {
     void vscode.window.showWarningMessage("No Cloud.ru workspaces are available for this account.");
     return;
   }
 
-  const chosen =
-    workspaces.length === 1
-      ? workspaces[0]
-      : await pickWorkspace(workspaces);
+  const chosen = workspaces.length === 1 ? workspaces[0] : await pickWorkspace(workspaces);
   if (!chosen) return;
-
-  const xApiKey = await resolveXApiKey(client, chosen.id);
-  if (!xApiKey) return;
-
-  const ctx: WorkspaceContext = {
-    workspaceId: chosen.id,
-    namespace: chosen.namespace,
-    xApiKey,
-    workspaceName: chosen.name,
-  };
-  await session.set(ctx);
-  void vscode.window.showInformationMessage(`Cloud.ru workspace: ${chosen.name}`);
+  await session.set({ workspaceId: chosen.workspace_id, workspaceName: chosen.workspace_name });
+  void vscode.window.showInformationMessage(`Cloud.ru workspace: ${chosen.workspace_name}`);
 }
 
-async function pickWorkspace(workspaces: Workspace[]): Promise<Workspace | undefined> {
+async function pickWorkspace(workspaces: ConsoleWorkspace[]): Promise<ConsoleWorkspace | undefined> {
   const picked = await vscode.window.showQuickPick(
     workspaces.map((ws) => ({
-      label: ws.name,
-      description: ws.project_name,
-      detail: ws.owner_email,
+      label: ws.workspace_name,
+      ...(ws.project_name ? { description: ws.project_name } : {}),
+      ...(ws.email ? { detail: ws.email } : {}),
       ws,
     })),
-    { title: "Select Cloud.ru workspace", ignoreFocusOut: true },
+    { title: "Select Cloud.ru workspace", matchOnDescription: true, ignoreFocusOut: true },
   );
   return picked?.ws;
 }
 
-/** Fetch the workspace x-api-key, falling back to manual entry if the endpoint is unavailable. */
-async function resolveXApiKey(client: MlSpaceApiClient, workspaceId: string): Promise<string | undefined> {
-  try {
-    return await client.getXApiKey(workspaceId);
-  } catch {
-    return vscode.window.showInputBox({
-      title: "Cloud.ru x-api-key",
-      prompt: "Could not fetch the x-api-key automatically. Paste the workspace API key.",
-      password: true,
-      ignoreFocusOut: true,
-    });
-  }
+/** Fallback when the workspaces endpoint is unreachable: let the user paste the id by hand. */
+async function enterWorkspaceIdManually(session: SessionStore, cause?: unknown): Promise<void> {
+  const reason = cause instanceof Error ? ` (${cause.message})` : "";
+  const input = await vscode.window.showInputBox({
+    title: "Cloud.ru workspace",
+    prompt: `Could not load the workspace list${reason}. Paste your workspace id (x-workspace-id).`,
+    value: session.get()?.workspaceId ?? "",
+    ignoreFocusOut: true,
+    validateInput: (v) => (v.trim() ? undefined : "Workspace id is required"),
+  });
+  const id = input?.trim();
+  if (!id) return;
+  await session.set({ workspaceId: id, workspaceName: id });
+  void vscode.window.showInformationMessage(`Cloud.ru workspace: ${id}`);
 }
 
+/** Poll the notebook list until `isDone(status)`, refreshing the tree, with a progress notification. */
+async function pollUntil(
+  client: ConsoleApiClient,
+  ws: WorkspaceContext,
+  uid: string,
+  tree: NotebooksTreeProvider,
+  isDone: (status: string) => boolean,
+  title: string,
+  timeoutMs: number,
+): Promise<void> {
+  await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title }, async () => {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      tree.refresh();
+      let notebooks: Awaited<ReturnType<ConsoleApiClient["listNotebooks"]>> | undefined;
+      try {
+        notebooks = await client.listNotebooks(ws);
+      } catch {
+        // transient; keep polling
+      }
+      const nb = notebooks?.find((n) => n.uid === uid);
+      if (nb && isDone(nb.status)) {
+        tree.refresh();
+        return;
+      }
+      await delay(3000);
+    }
+    tree.refresh();
+  });
+}
+
+function delay(ms: number): Promise<void> {
+  const { promise, resolve } = Promise.withResolvers<void>();
+  setTimeout(resolve, ms);
+  return promise;
+}
 async function withErrorHandling(
-  auth: AuthService,
+  auth: ConsoleTokenProvider,
   logger: Logger,
   body: (...args: unknown[]) => Promise<void>,
   ...args: unknown[]

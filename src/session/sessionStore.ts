@@ -20,7 +20,7 @@ export class SessionStore {
     if (!raw) return;
     try {
       const parsed = JSON.parse(raw) as WorkspaceContext;
-      if (parsed.workspaceId && parsed.xApiKey) this.current = parsed;
+      if (parsed.workspaceId) this.current = parsed;
     } catch {
       // ignore corrupt entry
     }

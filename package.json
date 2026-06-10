@@ -92,6 +92,16 @@
         "icon": "$(notebook)"
       },
       {
+        "command": "cloudru.resumeNotebook",
+        "title": "Cloud.ru: Start (Resume) Notebook",
+        "icon": "$(run)"
+      },
+      {
+        "command": "cloudru.pauseNotebook",
+        "title": "Cloud.ru: Pause Notebook",
+        "icon": "$(debug-pause)"
+      },
+      {
         "command": "cloudru.openNotebookFiles",
         "title": "Cloud.ru: Browse Notebook Files (SSH)",
         "icon": "$(folder-opened)"
@@ -206,6 +216,16 @@
           "group": "inline@4"
         },
         {
+          "command": "cloudru.resumeNotebook",
+          "when": "view == cloudruNotebooks && viewItem =~ /^notebook\\.paused/",
+          "group": "inline@0"
+        },
+        {
+          "command": "cloudru.pauseNotebook",
+          "when": "view == cloudruNotebooks && viewItem =~ /^notebook\\.running/",
+          "group": "inline@5"
+        },
+        {
           "command": "cloudru.openNotebookInBrowser",
           "when": "view == cloudruNotebooks && viewItem =~ /^notebook/",
           "group": "context@1"
@@ -215,10 +235,15 @@
     "configuration": {
       "title": "Cloud.ru ML Space",
       "properties": {
-        "cloudru.api.baseUrl": {
+        "cloudru.console.apiBaseUrl": {
           "type": "string",
-          "default": "https://api.ai.cloud.ru",
-          "description": "Base URL of the Cloud.ru ML Space public API (without the /public/v2 suffix)."
+          "default": "https://console.cloud.ru/aicloud/ui",
+          "description": "Base URL of the Cloud.ru console UI backend used for the notebooks list."
+        },
+        "cloudru.console.url": {
+          "type": "string",
+          "default": "https://console.cloud.ru/",
+          "description": "Console URL opened in the sign-in browser window to capture the session token."
         },
         "cloudru.notebook.chromePath": {
           "type": "string",
