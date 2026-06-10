@@ -30,7 +30,7 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
     run("cloudru.signIn", async () => {
       const ok = await auth.signIn();
       if (!ok) return;
-      if (!session.get()) await selectWorkspace(client, session);
+      if (!session.get()) await selectWorkspace(client, session, logger);
       tree.refresh();
     }),
 
@@ -45,7 +45,7 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
         void vscode.window.showWarningMessage("Sign in to Cloud.ru first.");
         return;
       }
-      await selectWorkspace(client, session);
+      await selectWorkspace(client, session, logger);
       tree.refresh();
     }),
 
@@ -152,15 +152,16 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
 }
 
 /** Fetch the user's workspaces and persist the chosen one (its id becomes the x-workspace-id header). */
-async function selectWorkspace(client: ConsoleApiClient, session: SessionStore): Promise<void> {
+async function selectWorkspace(client: ConsoleApiClient, session: SessionStore, logger: Logger): Promise<void> {
   let workspaces: ConsoleWorkspace[];
   try {
     workspaces = await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Notification, title: "Loading Cloud.ru workspaces…" },
       () => client.listWorkspaces(),
     );
-  } catch {
-    await enterWorkspaceIdManually(session);
+  } catch (err) {
+    logger.error("Failed to load Cloud.ru workspaces", err);
+    await enterWorkspaceIdManually(session, err);
     return;
   }
   if (workspaces.length === 0) {
@@ -188,10 +189,11 @@ async function pickWorkspace(workspaces: ConsoleWorkspace[]): Promise<ConsoleWor
 }
 
 /** Fallback when the workspaces endpoint is unreachable: let the user paste the id by hand. */
-async function enterWorkspaceIdManually(session: SessionStore): Promise<void> {
+async function enterWorkspaceIdManually(session: SessionStore, cause?: unknown): Promise<void> {
+  const reason = cause instanceof Error ? ` (${cause.message})` : "";
   const input = await vscode.window.showInputBox({
     title: "Cloud.ru workspace",
-    prompt: "Could not load the workspace list. Paste your workspace id (x-workspace-id).",
+    prompt: `Could not load the workspace list${reason}. Paste your workspace id (x-workspace-id).`,
     value: session.get()?.workspaceId ?? "",
     ignoreFocusOut: true,
     validateInput: (v) => (v.trim() ? undefined : "Workspace id is required"),

@@ -37,8 +37,18 @@ export class ConsoleApiClient {
 
   /** Workspaces the signed-in user can access (no x-workspace-id — this is the bootstrap call). */
   async listWorkspaces(): Promise<ConsoleWorkspace[]> {
-    const res = await this.request<ConsoleWorkspace[]>("GET", "/user/v1/workspaces/", undefined);
-    return Array.isArray(res) ? res : [];
+    // The console switcher hits /user/v1/workspaces/; some deployments expose it only under
+    // /organisation/v1/workspaces/. Try both and use whichever returns a list.
+    const candidates = ["/user/v1/workspaces/", "/organisation/v1/workspaces/"];
+    let lastError: unknown;
+    for (const path of candidates) {
+      try {
+        return coerceWorkspaces(await this.request<unknown>("GET", path, undefined));
+      } catch (err) {
+        lastError = err;
+      }
+    }
+    throw lastError ?? new ApiError("network", "Could not load Cloud.ru workspaces.");
   }
 
   async listNotebooks(ws: WorkspaceContext): Promise<NotebookHandlerResponse[]> {
@@ -104,4 +114,11 @@ function safeJsonParse(text: string): unknown {
   } catch {
     return undefined;
   }
+}
+
+/** Accept either a bare `Workspace[]` or a `{ workspaces: [...] }` envelope. */
+function coerceWorkspaces(res: unknown): ConsoleWorkspace[] {
+  if (Array.isArray(res)) return res as ConsoleWorkspace[];
+  const list = (res as { workspaces?: unknown } | null)?.workspaces;
+  return Array.isArray(list) ? (list as ConsoleWorkspace[]) : [];
 }
