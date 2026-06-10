@@ -1,34 +1,26 @@
-import * as fs from "node:fs";
+import * as http from "node:http";
 import * as vscode from "vscode";
 import type { NotebookHandlerResponse } from "../api/types";
 import type { Logger } from "../util/logger";
-import { findChrome } from "./chrome";
+import { SshConnection } from "../ssh/connection";
+import type { SshConfig } from "../ssh/sshConfig";
 import { labPath, parseNotebookUrl } from "./notebookUrl";
 import { openNotebookPanel } from "./notebookPanel";
-import { captureNotebookSession } from "./oidcLogin";
-import { NotebookSessionStore } from "./sessionCookies";
 import { NotebookShim } from "./shim";
 
+const POD_JUPYTER_PORT = 8888;
+
 /**
- * Owns the moving parts for "open the notebook UI inside VS Code": the captured OIDC session, the
- * per-origin local shim, and the webview panels. One shim is shared per notebook origin; one panel
- * per notebook uid.
+ * "Open the notebook UI inside VS Code": tunnel to the pod's tokenless JupyterLab (127.0.0.1:8888)
+ * over SSH — the same proven path the remote kernel uses — and frame it in a webview through a local
+ * shim that strips X-Frame-Options / CSP frame-ancestors. No OIDC proxy, no cookie capture.
  */
 export class NotebookViewController {
-  private readonly sessions: NotebookSessionStore;
-  private readonly shims = new Map<string, NotebookShim>(); // by origin
-  private readonly cookies = new Map<string, string>(); // by host (in-memory mirror of the store)
+  private readonly connections = new Map<string, SshConnection>(); // by notebook uid
+  private readonly shims = new Map<string, { shim: NotebookShim; appPath: string }>(); // by uid
   private readonly panels = new Map<string, vscode.WebviewPanel>(); // by notebook uid
 
-  constructor(
-    private readonly deps: {
-      secrets: vscode.SecretStorage;
-      context: vscode.ExtensionContext;
-      logger: Logger;
-    },
-  ) {
-    this.sessions = new NotebookSessionStore(deps.secrets);
-  }
+  constructor(private readonly deps: { config: SshConfig; logger: Logger }) {}
 
   async open(notebook: NotebookHandlerResponse): Promise<void> {
     if (notebook.status !== "running" || !notebook.url) {
@@ -37,91 +29,97 @@ export class NotebookViewController {
       );
       return;
     }
-    const { origin, prefix } = parseNotebookUrl(notebook.url);
-    const host = new URL(origin).host;
+    const entry = await this.ensureShim(notebook);
+    if (!entry) return;
 
-    const cookie = await this.ensureSession(notebook.url, host);
-    if (!cookie) return; // login cancelled or no browser available
+    const localUrl = `${entry.shim.baseUrl}${entry.appPath}`;
+    // asExternalUri: the sanctioned way to frame a local server in a webview (works in forks/remote).
+    const external = await vscode.env.asExternalUri(vscode.Uri.parse(localUrl));
+    this.deps.logger.info(`Opening notebook webview: shim=${entry.shim.baseUrl} frame=${external.toString()}`);
 
-    const shim = await this.ensureShim(origin, host);
     const panel = openNotebookPanel({
       title: notebook.name,
-      iframeUrl: shim.baseUrl + labPath(prefix),
+      frameSrc: external.toString(),
+      frameOrigin: `${external.scheme}://${external.authority}`,
       existing: this.panels.get(notebook.uid),
     });
     this.panels.set(notebook.uid, panel);
     panel.onDidDispose(() => this.panels.delete(notebook.uid));
   }
 
-  private async ensureSession(notebookUrl: string, host: string): Promise<string | undefined> {
-    const cached = this.cookies.get(host) ?? (await this.sessions.get(host));
-    if (cached) {
-      this.cookies.set(host, cached);
-      return cached;
-    }
-    return this.login(notebookUrl, host);
-  }
-
-  private async login(notebookUrl: string, host: string): Promise<string | undefined> {
-    const override = vscode.workspace.getConfiguration("cloudru").get<string>("notebook.chromePath", "");
-    const chromePath = findChrome(override);
-    if (!chromePath) {
-      void vscode.window.showErrorMessage(
-        "No Chrome/Chromium found for sign-in. Set “cloudru.notebook.chromePath” to a browser executable.",
-      );
-      return undefined;
-    }
-
-    const userDataDir = vscode.Uri.joinPath(this.deps.context.globalStorageUri, "oidc-profile").fsPath;
-    fs.mkdirSync(userDataDir, { recursive: true });
-
-    try {
-      const cookie = await vscode.window.withProgress(
-        {
-          location: vscode.ProgressLocation.Notification,
-          title: "Cloud.ru: complete sign-in in the opened browser window…",
-        },
-        () => captureNotebookSession({ notebookUrl, chromePath, userDataDir }),
-      );
-      this.cookies.set(host, cookie);
-      await this.sessions.set(host, cookie);
-      this.deps.logger.info(`Captured notebook session for ${host}.`);
-      return cookie;
-    } catch (err) {
-      this.deps.logger.error("Notebook sign-in failed", err);
-      void vscode.window.showErrorMessage(`Cloud.ru notebook sign-in failed: ${(err as Error).message}`);
-      return undefined;
-    }
-  }
-
-  private async ensureShim(origin: string, host: string): Promise<NotebookShim> {
-    const existing = this.shims.get(origin);
+  private async ensureShim(
+    notebook: NotebookHandlerResponse,
+  ): Promise<{ shim: NotebookShim; appPath: string } | undefined> {
+    const existing = this.shims.get(notebook.uid);
     if (existing) return existing;
-    const tlsVerify = vscode.workspace.getConfiguration("cloudru").get<boolean>("notebook.tlsVerify", true);
-    const shim = new NotebookShim({
-      origin,
-      getSessionCookie: () => this.cookies.get(host) ?? "",
-      onAuthExpired: () => this.invalidate(host),
-      onError: (err) => this.deps.logger.error(`Notebook proxy error for ${host}`, err),
-      tlsVerify,
-    });
-    await shim.start();
-    this.shims.set(origin, shim);
-    return shim;
+    const target = await this.deps.config.resolveTarget(notebook);
+    if (!target) return undefined;
+    const connection = this.connections.get(notebook.uid) ?? new SshConnection(target);
+    this.connections.set(notebook.uid, connection);
+    const { prefix } = parseNotebookUrl(notebook.url ?? "");
+    try {
+      const localPort = await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: `Connecting to ${notebook.name}…` },
+        () =>
+          connection.forward("127.0.0.1", POD_JUPYTER_PORT, (err) =>
+            this.deps.logger.error(`Notebook tunnel error for ${notebook.name}`, err),
+          ),
+      );
+      // Jupyter serves its UI under base_url=<prefix> (".../lab"); other app images (marimo, vscode, …)
+      // serve from "/". Probe the pod to pick the path that actually returns a UI — no per-type guessing.
+      const appPath = await this.probeAppPath(localPort, [labPath(prefix), "/"]);
+      const shim = new NotebookShim({
+        origin: `http://127.0.0.1:${localPort}`,
+        getSessionCookie: () => "",
+        onAuthExpired: () => undefined,
+        onError: (err) => this.deps.logger.error(`Notebook shim error for ${notebook.name}`, err),
+        onTrace: (method, url, status) => this.deps.logger.info(`shim ${status} ${method} ${url}`),
+        tlsVerify: true,
+      });
+      await shim.start();
+      const entry = { shim, appPath };
+      this.shims.set(notebook.uid, entry);
+      return entry;
+    } catch (err) {
+      this.deps.logger.error(`Notebook connect failed for ${notebook.name}`, err);
+      void vscode.window.showErrorMessage(`Could not connect to ${notebook.name}: ${(err as Error).message}`);
+      return undefined;
+    }
   }
 
-  private invalidate(host: string): void {
-    this.cookies.delete(host);
-    void this.sessions.clear(host);
-    void vscode.window.showWarningMessage(
-      "Cloud.ru notebook session expired. Reopen the notebook to sign in again.",
-    );
+  /** Pick the first candidate path that returns a usable HTTP response (2xx/3xx) from the pod. */
+  private async probeAppPath(localPort: number, candidates: string[]): Promise<string> {
+    for (const path of candidates) {
+      if (await probeHttp(localPort, path)) {
+        this.deps.logger.info(`Notebook app path resolved to "${path}"`);
+        return path;
+      }
+    }
+    return candidates[candidates.length - 1] ?? "/";
   }
 
   dispose(): void {
-    for (const shim of this.shims.values()) shim.dispose();
-    this.shims.clear();
+    for (const { shim } of this.shims.values()) shim.dispose();
+    for (const connection of this.connections.values()) connection.dispose();
     for (const panel of this.panels.values()) panel.dispose();
+    this.shims.clear();
+    this.connections.clear();
     this.panels.clear();
   }
+}
+
+/** GET the path through the local tunnel; true if the pod returns a usable HTTP response (2xx/3xx). */
+function probeHttp(localPort: number, path: string, timeoutMs = 6000): Promise<boolean> {
+  const { promise, resolve } = Promise.withResolvers<boolean>();
+  const req = http.get({ host: "127.0.0.1", port: localPort, path, timeout: timeoutMs }, (res) => {
+    const status = res.statusCode ?? 0;
+    res.resume(); // drain
+    resolve(status >= 200 && status < 400);
+  });
+  req.on("error", () => resolve(false)); // parse error / connection reset → not this path
+  req.on("timeout", () => {
+    req.destroy();
+    resolve(false);
+  });
+  return promise;
 }

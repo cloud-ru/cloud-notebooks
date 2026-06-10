@@ -18,6 +18,8 @@ export interface NotebookShimOptions {
   onAuthExpired: () => void;
   /** Reports upstream/proxy failures for diagnostics. */
   onError: (error: Error) => void;
+  /** Trace each proxied response (method, path, status) for diagnostics. */
+  onTrace?: (method: string, url: string, status: number) => void;
   /** Verify the upstream TLS certificate. Set false only for isolated/inspected networks. */
   tlsVerify: boolean;
 }
@@ -35,16 +37,17 @@ export class NotebookShim {
   private url = "";
 
   constructor(opts: NotebookShimOptions) {
+    const isHttps = opts.origin.startsWith("https");
     this.proxy = httpProxy.createProxyServer({
       target: opts.origin,
       changeOrigin: true,
-      secure: opts.tlsVerify,
-      agent: createUpstreamAgent(opts.tlsVerify),
       ws: true,
       autoRewrite: false,
       followRedirects: false,
-      proxyTimeout: 20_000,
-      timeout: 20_000,
+      proxyTimeout: 60_000,
+      timeout: 60_000,
+      // TLS agent only for https upstreams (e.g. the OIDC proxy); the SSH-tunnelled pod is plain http.
+      ...(isHttps ? { secure: opts.tlsVerify, agent: createUpstreamAgent(opts.tlsVerify) } : {}),
     });
 
     this.proxy.on("proxyReq", (proxyReq, req) => {
@@ -53,10 +56,11 @@ export class NotebookShim {
     this.proxy.on("proxyReqWs", (proxyReq, req) => {
       proxyReq.setHeader("cookie", mergeCookieHeader(req.headers.cookie, opts.getSessionCookie()));
     });
-    this.proxy.on("proxyRes", (proxyRes) => {
+    this.proxy.on("proxyRes", (proxyRes, req) => {
       stripFramingHeaders(proxyRes.headers as MutableHeaders);
       const setCookie = proxyRes.headers["set-cookie"];
       if (setCookie) proxyRes.headers["set-cookie"] = rewriteSetCookieForLocalhost(setCookie);
+      opts.onTrace?.(req.method ?? "?", req.url ?? "?", proxyRes.statusCode ?? 0);
 
       const location = proxyRes.headers["location"];
       if (proxyRes.statusCode === 302 && typeof location === "string" && location.includes("id.cloud.ru")) {

@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import type { MlSpaceApiClient } from "../api/mlspaceClient";
+import type { ConsoleApiClient } from "../console/apiClient";
 import { ApiError } from "../api/errors";
 import type { NotebookHandlerResponse } from "../api/types";
 import type { SessionStore } from "../session/sessionStore";
@@ -15,7 +15,7 @@ import {
 } from "./notebookFilter";
 
 export interface NotebooksTreeDeps {
-  client: MlSpaceApiClient;
+  client: ConsoleApiClient;
   session: SessionStore;
   favorites: FavoritesStore;
   isSignedIn: () => Promise<boolean>;

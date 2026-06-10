@@ -3,7 +3,8 @@ import * as vscode from "vscode";
 /** Opens (or reveals) a webview editor that frames the notebook UI served by the local shim. */
 export function openNotebookPanel(opts: {
   title: string;
-  iframeUrl: string;
+  frameSrc: string;
+  frameOrigin: string;
   existing?: vscode.WebviewPanel | undefined;
 }): vscode.WebviewPanel {
   if (opts.existing) {
@@ -16,16 +17,15 @@ export function openNotebookPanel(opts: {
     vscode.ViewColumn.Active,
     { enableScripts: true, retainContextWhenHidden: true },
   );
-  panel.webview.html = renderHtml(opts.iframeUrl);
+  panel.webview.html = renderHtml(opts.frameSrc, opts.frameOrigin);
   return panel;
 }
 
-function renderHtml(iframeUrl: string): string {
-  // The webview's own CSP must permit framing the localhost shim. The shim has already stripped the
-  // upstream X-Frame-Options / frame-ancestors so the inner page renders.
+function renderHtml(frameSrc: string, frameOrigin: string): string {
+  // Allow framing the shim origin (http://127.0.0.1:<port> locally, or the asExternalUri tunnel host).
   const csp = [
     "default-src 'none'",
-    "frame-src http://127.0.0.1:* http://localhost:*",
+    `frame-src ${frameOrigin} http://127.0.0.1:* http://localhost:*`,
     "style-src 'unsafe-inline'",
   ].join("; ");
   return `<!DOCTYPE html>
@@ -39,7 +39,7 @@ function renderHtml(iframeUrl: string): string {
     </style>
   </head>
   <body>
-    <iframe src="${iframeUrl}" allow="clipboard-read; clipboard-write; cross-origin-isolated"></iframe>
+    <iframe src="${frameSrc}" allow="clipboard-read; clipboard-write; cross-origin-isolated"></iframe>
   </body>
 </html>`;
 }
