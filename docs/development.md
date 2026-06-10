@@ -1,158 +1,147 @@
-# Development, testing & publishing
+# Запуск в дев-режиме и сборка
 
-How the extension goes from source → running in VS Code → installed for QA → published.
+Как расширение проходит путь от исходников → запуска в VS Code → сборки `.vsix` для QA → публикации.
 
-## 0. Prerequisites
-- Node.js ≥ 18 (this repo is built/tested on Node 20/24).
-- **pnpm** — this project uses pnpm (pinned via `packageManager` in `package.json`). The simplest way
-  to get the right version is Corepack: `corepack enable` (ships with Node), or install pnpm directly
-  (`npm i -g pnpm` / `brew install pnpm`).
-- VS Code ≥ 1.90.
-- For packaging/publishing: `@vscode/vsce` (Marketplace) and optionally `ovsx` (Open VSX). Run via
-  `pnpm dlx` — no global install needed.
-- A Cloud.ru **service account** with an **Access Key** (`client_id` + `client_secret`) created in the
-  Cloud.ru console (Management → service accounts → access keys).
+- [Требования](#требования)
+- [Установка и сборка](#установка-и-сборка)
+- [Запуск в дев-режиме (F5)](#запуск-в-дев-режиме-f5)
+- [Тесты и проверки](#тесты-и-проверки)
+- [Сборка .vsix](#сборка-vsix)
+- [Публикация](#публикация)
+- [Как проверять встраивание ноутбука](#как-проверять-встраивание-ноутбука)
+- [Отладка и диагностика](#отладка-и-диагностика)
 
-> pnpm note: pnpm 10 blocks dependency build scripts by default. `esbuild`'s postinstall is
-> allow-listed via `pnpm.onlyBuiltDependencies` in `package.json`, so a fresh `pnpm install` links the
-> esbuild binary correctly. If you add a dependency that needs its install script, add it there.
+---
 
-## 1. Install & build
+## Требования
+
+- **Node.js ≥ 22.** В рантайме используется `Promise.withResolvers`, поэтому нужен Node 22+ (его несёт
+  и свежий VS Code/Cursor).
+- **pnpm** — пакетный менеджер проекта (версия закреплена в `package.json` → `packageManager`). Проще
+  всего через Corepack: `corepack enable` (идёт с Node), либо `npm i -g pnpm` / `brew install pnpm`.
+- **VS Code ≥ 1.90** (или совместимый форк — Cursor, VSCodium).
+- **Системный Chrome / Chromium / Edge** — нужен для одноразового входа в Cloud.ru (расширение не
+  тащит свой браузер). Автоопределяется; путь можно задать в настройке `cloudru.notebook.chromePath`.
+- Для работы с ноутбуками: учётная запись Cloud.ru с доступом к ML Space-воркспейсу. **Ключи и
+  регистрация OAuth-клиента не нужны** — вход идёт по SSO в браузере.
+
+> pnpm 10 по умолчанию блокирует install-скрипты зависимостей. Postinstall у `esbuild` разрешён через
+> `pnpm.onlyBuiltDependencies` в `package.json`, поэтому свежий `pnpm install` корректно линкует
+> бинарь esbuild. Добавляете зависимость с install-скриптом — допишите её туда же.
+
+---
+
+## Установка и сборка
+
 ```bash
 pnpm install
-pnpm bundle           # one-off esbuild → dist/extension.js
-pnpm bundle:watch     # rebuild on change (use while developing)
+pnpm bundle           # разовая сборка esbuild → dist/extension.js
+pnpm bundle:watch     # пересборка при изменениях (для разработки)
+pnpm typecheck        # tsc --noEmit (esbuild сам типы не проверяет)
 ```
-- `dist/extension.js` is the bundled entry point declared by `package.json#main`. It is gitignored and
-  rebuilt on demand (and automatically before packaging via `vscode:prepublish`).
-- `pnpm typecheck` runs `tsc --noEmit` (esbuild itself does not type-check).
 
-## 2. Run in dev mode (Extension Development Host)
-This is the inner loop — no packaging required.
+- `dist/extension.js` — бандл-точка входа, объявленная в `package.json#main`. Файл в `.gitignore` и
+  пересобирается по требованию (а также автоматически перед упаковкой через `vscode:prepublish`).
+- В бандл **не** включаются `puppeteer-core` и `ssh2` (тяжёлые / с нативными частями) — они помечены
+  `external` в `esbuild.js` и приезжают из `node_modules` в рантайме. `http-proxy` бандлится внутрь.
 
-1. Open this folder in VS Code.
-2. Start `pnpm bundle:watch` (or rely on the `preLaunchTask`).
-3. Press **F5** (launch config "Run Extension" in `.vscode/launch.json`). A second VS Code window
-   opens — the **Extension Development Host** — with this extension loaded.
-4. In that window:
-   - Open the **Cloud.ru ML Space** view from the activity bar.
-   - Click **Sign in to Cloud.ru** → paste `client_id`, then `client_secret`. The keys are stored in
-     VS Code **SecretStorage** (OS keychain), never in settings or logs.
-   - Pick a workspace → the notebook list loads. Each row shows status; the inline / context action
-     **Open in Browser** opens today's Jupyter URL.
-5. Inspect logs in **Output → "Cloud.ru ML Space"**. Secrets are scrubbed.
-6. After code changes: the watcher rebuilds; press **Ctrl/Cmd+R** in the dev-host window to reload, or
-   use *Developer: Reload Window*.
+---
 
-> Tip: `ms-toolsai.jupyter` is a runtime dependency for the *next* phase (open-in-VS-Code). It is not
-> required for the auth + listing slice. When you add the kernel/FS providers, add
-> `"extensionDependencies": ["ms-toolsai.jupyter"]` back to `package.json` and `@vscode/jupyter-extension`
-> to devDependencies.
+## Запуск в дев-режиме (F5)
 
-## 3. Testing
-- **Unit (vitest, no VS Code):** `pnpm test`. Covers the API client (header/query construction, error
-  mapping, network failures), error mapping, token cache expiry, and status presentation. These run in
-  CI and locally in milliseconds because the `vscode`-coupled code is kept out of the tested modules
-  (the client takes an injectable `fetchImpl`).
-- **Integration (future, `@vscode/test-electron`):** launches a headless VS Code to assert activation,
-  command registration, and tree rendering against a faked client. Add under `test/integration/`.
-- **Live API smoke (manual / opt-in):** gate behind env vars and skip when absent — never commit keys:
-  ```bash
-  CLOUDRU_CLIENT_ID=... CLOUDRU_CLIENT_SECRET=... pnpm smoke   # script to be added
-  ```
+Это основной цикл разработки — упаковка не нужна.
 
-## 4. Package a VSIX (shareable build)
+1. Откройте папку проекта в VS Code / Cursor.
+2. Запустите `pnpm bundle:watch` (или положитесь на `preLaunchTask`).
+3. Нажмите **F5** (конфигурация «Run Extension» в `.vscode/launch.json`). Откроется второе окно —
+   **Extension Development Host** — с загруженным расширением.
+4. В этом окне:
+   - откройте вью **Cloud.ru ML Space** на панели активности;
+   - **Sign in to Cloud.ru** → откроется браузер → войдите по SSO → окно закроется, токен захвачен;
+   - **Select Workspace** → выберите воркспейс из списка → подгрузится список ноутбуков;
+   - правый клик / инлайн-иконки на ноутбуке: открыть в VS Code, открыть в браузере, файлы по SSH,
+     полный IDE, пауза/запуск.
+5. Логи — в **Output → «Cloud.ru ML Space»** (секреты вырезаются).
+6. После правок кода: watcher пересобирает бандл → нажмите **Ctrl/Cmd+R** в окне дев-хоста (или
+   *Developer: Reload Window*).
+
+---
+
+## Тесты и проверки
+
 ```bash
-pnpm dlx @vscode/vsce package   # → cloudru-jupyter-vscode-0.0.1.vsix
+pnpm test         # юнит-тесты (vitest), без VS Code
+pnpm typecheck    # проверка типов
 ```
-- `vsce` runs `vscode:prepublish` (production bundle) first.
-- Do **not** pass `--no-dependencies`: `puppeteer-core` is a real runtime `dependency` marked
-  `external` in esbuild (it is too heavy/dynamic to bundle), so it must ship in `node_modules`. vsce
-  includes `dependencies` (not `devDependencies`) automatically. `http-proxy` is bundled into
-  `dist/extension.js`, so only `puppeteer-core` is shipped unbundled.
-- Requires a Chrome/Chromium/Edge on the user's machine for the one-time notebook sign-in (auto-detected,
-  or set `cloudru.notebook.chromePath`). The extension does not bundle a browser.
-- Engine note: the embedded-notebook code uses `Promise.withResolvers`, which needs the Node runtime
-  shipped with VS Code ≥ the version whose Electron carries Node 22 (recent VS Code). Bump
-  `engines.vscode` if you must support older builds.
-- Warnings you may see and how to clear them: add a `LICENSE` file, a `README.md` (present), an `icon`
-  (128×128 PNG referenced by `package.json#icon`), and a `repository` (present). Warnings are
-  non-fatal; `--allow-*` flags exist if you must skip one.
 
-### Install/sideload the VSIX (for QA or internal distribution)
+Юнит-тесты покрывают чистую логику без зависимости от `vscode`: маппинг DTO, разбор URL ноутбука и
+ядра, построение тела resume, преобразование заголовков shim'а, разбор/сборку SSH-config и URI,
+статусы, маппинг ошибок API. Сетевые клиенты тестируются через инъектируемый `fetchImpl`, поэтому
+тесты идут за миллисекунды и не ходят в сеть.
+
+Живой путь (вход в браузере, туннель, webview, исполнение ячеек) детерминированно не тестируется —
+его проверяют вручную в дев-хосте (см. ниже).
+
+---
+
+## Сборка .vsix
+
 ```bash
-code --install-extension cloudru-jupyter-vscode-0.0.1.vsix
+pnpm dlx @vscode/vsce package   # → cloudru-jupyter-vscode-<версия>.vsix
 ```
-or in VS Code: Extensions view → "…" menu → **Install from VSIX…**. This is the simplest way to hand a
-build to colleagues without using a public marketplace.
 
-## 5. Publish to the VS Code Marketplace
-The Marketplace is backed by Azure DevOps.
+- `vsce` сначала прогоняет `vscode:prepublish` (продакшен-бандл).
+- **Не** передавайте `--no-dependencies`: `puppeteer-core` и `ssh2` — реальные рантайм-зависимости,
+  помеченные `external`, и должны уехать в `node_modules`. `vsce` включает `dependencies` (не
+  `devDependencies`) автоматически.
 
-1. **Create a publisher** at <https://marketplace.visualstudio.com/manage> (the `publisher` field in
-   `package.json` must match — currently `cloudru`).
-2. **Create a Personal Access Token (PAT)** in Azure DevOps for that org with scope **Marketplace →
-   Manage**.
-3. **Authenticate & publish:**
-   ```bash
-   pnpm dlx @vscode/vsce login cloudru                     # paste the PAT once
-   pnpm dlx @vscode/vsce publish --no-dependencies         # publishes the current version
-   # or bump + publish in one step:
-   pnpm dlx @vscode/vsce publish patch --no-dependencies   # 0.0.1 → 0.0.2 (also: minor / major / <version>)
-   ```
-4. **Pre-publish requirements:** unique `name`+`publisher`, a `displayName`, `description`, `engines.vscode`,
-   `categories`, a 128×128 `icon`, a `README.md` (shown on the listing), a `LICENSE`, and a
-   `repository` URL. CI should run `typecheck` + `test` + `package` before publishing.
-5. **Versioning:** Marketplace rejects re-publishing the same version — always bump. Use
-   `--pre-release` for preview channels.
+Установить локально (для QA или внутренней раздачи):
 
-## 6. Open VSX (optional — for VSCodium / Cursor / non-Microsoft builds)
 ```bash
-pnpm dlx ovsx publish cloudru-jupyter-vscode-0.0.1.vsix -p <OPEN_VSX_TOKEN>
+code --install-extension cloudru-jupyter-vscode-<версия>.vsix
 ```
-Recommended if any users run a VS Code derivative that cannot reach the MS Marketplace.
 
-## 7. Internal-only distribution (likely the right default for an enterprise rollout)
-If this should not be public:
-- Distribute the **VSIX** via an internal artifact store / shared drive and have users sideload (§4).
-- Or host a **private extension gallery** (e.g. an internal Open VSX, or a service like Eclipse Open
-  VSX self-hosted) and point users' `extensions.gallery` settings at it.
-- A CI job can build the VSIX on tag and publish it to the chosen channel.
+или в VS Code: вью Extensions → меню «…» → **Install from VSIX…**.
 
-## 8. Suggested CI (GitHub Actions / GitLab CI)
-On push/PR: `pnpm install --frozen-lockfile` → `pnpm typecheck` → `pnpm test` → `pnpm package`
-(artifact the `.vsix` via `pnpm dlx @vscode/vsce package`).
-On tag `v*`: additionally `vsce publish` (and/or `ovsx publish`) using a secret PAT. Use
-`corepack enable` (or `pnpm/action-setup`) so CI picks up the pinned pnpm version.
+---
 
-## 9. Embedded notebook UI (web UI inside VS Code) — how it works & how to verify
+## Публикация
 
-The notebook web UI lives behind a Cloud.ru OIDC proxy that (a) refuses every API token we can mint
-(only its interactive `authservice_session` cookie authenticates) and (b) sets `X-Frame-Options: DENY`
-/ `CSP frame-ancestors 'self'`. So the extension:
-1. **Captures the session** — `cloudru.openNotebook` opens a controlled browser (`puppeteer-core` +
-   system Chrome) at the notebook URL; you complete the normal cloud.ru login; the extension reads the
-   `authservice_session` cookie via CDP and stores it in SecretStorage (per host).
-   (`src/jupyter/oidcLogin.ts`, `src/jupyter/sessionCookies.ts`)
-2. **Runs a local shim** — a `127.0.0.1` reverse proxy that injects the session cookie on every
-   request, proxies HTTP + WebSocket to the notebook origin, strips `X-Frame-Options`, removes CSP
-   `frame-ancestors`, and rewrites Set-Cookie (drops `Secure`/`Domain`) so cookies persist over
-   `http://127.0.0.1`. (`src/jupyter/shim.ts`, `src/jupyter/headerRewrite.ts`)
-3. **Frames it** — a webview editor iframes `http://127.0.0.1:<port>/<prefix>/lab`, so JupyterLab
-   renders inside VS Code. (`src/jupyter/notebookPanel.ts`, orchestrated by
-   `src/jupyter/notebookController.ts`)
+Для широкой раздачи внутри компании обычно достаточно `.vsix` через внутренний артефакт-стор + ручная
+установка. Если нужна публичная публикация:
 
-The deterministic core (header/cookie/URL transforms) is unit-tested. The interactive path can only be
-verified live in the Extension Development Host:
-1. `pnpm bundle` → F5. Sign in, select workspace, click a **running** notebook.
-2. A browser window opens → log in to cloud.ru → it closes; a webview editor opens with the lab.
-3. Confirm: the file tree loads, open a notebook, run a cell → output returns (kernel WS rides the
-   shim). If the lab shows a login redirect instead, the session expired → reopen to re-login.
+- **VS Code Marketplace** (Azure DevOps): создать publisher (поле `publisher` в `package.json` должно
+  совпадать), завести PAT со scope **Marketplace → Manage**, затем
+  `pnpm dlx @vscode/vsce publish`. Версию нужно поднимать на каждый релиз.
+- **Open VSX** (для VSCodium / Cursor и других форков): `pnpm dlx ovsx publish <файл>.vsix -p <token>`.
 
-Verification notes / risks to watch:
-- **WebSocket**: kernels need the WS upgrade to proxy through the shim — confirm cells execute.
-- **PageConfig wsUrl**: if the lab tries to open `wss://k2-nb…` directly (bypassing the shim) instead
-  of a relative URL, the shim must also rewrite the HTML `PageConfig`. Modern JupyterLab derives the WS
-  URL from `window.location`, so this usually works as-is; verify on the target image.
-- **Session lifetime**: when `authservice_session` expires the shim detects the OIDC redirect and
-  clears it; the next open re-runs the login.
+CI перед публикацией должен прогонять `typecheck` + `test` + `package` (используйте `corepack enable`,
+чтобы подхватить закреплённую версию pnpm).
+
+---
+
+## Как проверять встраивание ноутбука
+
+Веб-UI ноутбука открывается в VS Code через SSH-туннель к поду и локальный прокси (см.
+[architecture.md](./architecture.md#поток-3-открытие-ноутбука-внутри-vs-code)). Для этого нужен
+SSH-ключ ML Space (скачивается из консоли) — задайте его в `cloudru.ssh.privateKeyPath` или через
+команду **Configure SSH**.
+
+1. `pnpm bundle` → F5. Войдите, выберите воркспейс, кликните **running**-ноутбук → «Open in VS Code».
+2. Откроется webview с веб-интерфейсом (JupyterLab / marimo / др.).
+3. В Output → «Cloud.ru ML Space» проверьте строки `Notebook app path resolved to …` и `shim 200 GET …`.
+4. Для удалённого ядра: откройте `.ipynb`, выберите облачный сервер в пикере ядра Jupyter, запустите
+   ячейку — вывод приходит по туннелю.
+
+---
+
+## Отладка и диагностика
+
+- **Output → «Cloud.ru ML Space»** — основной канал логов. Bearer-токены и чувствительные заголовки
+  вырезаются.
+- `fetch failed` / сетевые ошибки API теперь показывают первопричину (например, код TLS-ошибки) — если
+  это CA, проверьте, что машина за корпоративным прокси (расширение уже доверяет системному
+  хранилищу CA; на изолированных сетях этого может не хватать).
+- Если вход не находит браузер — задайте путь в `cloudru.notebook.chromePath`.
+- SSH-проблемы (ключ/account-id/host) — команда **Configure SSH**; шаблон хоста и порт настраиваются
+  в `cloudru.ssh.hostTemplate` / `cloudru.ssh.port`.
