@@ -5,8 +5,6 @@
 // frame-ancestors 'self'`, both of which block framing. We strip exactly those framing controls and
 // leave the rest of the CSP intact.
 
-import type { IncomingHttpHeaders } from "node:http";
-
 export type MutableHeaders = Record<string, string | string[] | undefined>;
 
 /** Remove only the `frame-ancestors` directive from a CSP value, preserving the others. */
@@ -44,21 +42,6 @@ export function stripFramingHeaders(headers: MutableHeaders): void {
     }
   }
 }
-
-/**
- * Build the upstream `Cookie` header by merging a captured session cookie with whatever the iframe
- * already sent. The captured session wins for duplicate names so auth is never lost.
- */
-export function mergeCookieHeader(
-  incoming: IncomingHttpHeaders["cookie"],
-  sessionCookie: string,
-): string {
-  const session = parseCookiePairs(sessionCookie);
-  const sessionNames = new Set(session.map(([name]) => name));
-  const forwarded = parseCookiePairs(incoming).filter(([name]) => !sessionNames.has(name));
-  return [...session, ...forwarded].map(([name, value]) => `${name}=${value}`).join("; ");
-}
-
 /**
  * Rewrite upstream Set-Cookie lines so the browser keeps them when the page is served over plain
  * http://127.0.0.1: drop `Secure` and `Domain=…`, and downgrade `SameSite=None` (which requires
@@ -73,17 +56,4 @@ export function rewriteSetCookieForLocalhost(setCookie: string[]): string[] {
       .map((attr) => (/^samesite=none$/i.test(attr) ? "SameSite=Lax" : attr))
       .join("; "),
   );
-}
-
-function parseCookiePairs(header: string | undefined): Array<[string, string]> {
-  if (!header) return [];
-  const pairs: Array<[string, string]> = [];
-  for (const part of header.split(";")) {
-    const trimmed = part.trim();
-    if (!trimmed) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq <= 0) continue;
-    pairs.push([trimmed.slice(0, eq).trim(), trimmed.slice(eq + 1).trim()]);
-  }
-  return pairs;
 }
