@@ -1,15 +1,12 @@
 // Pure helpers for SSH target derivation. No `vscode` → unit-testable.
 //
-// Real connection:
-//   ssh my-notebook-server.ai0000000-00000@ssh-a100-jupyter.ai.cloud.ru -p 2222 -i <key>
-//        └─────────── server name ───────────┘ └── accountId ─┘ └──── pool host (a100) ─────┘
-import { parseNotebookUrl } from "../jupyter/notebookUrl";
-
-export interface SshTarget {
-  host: string;
-  port: number;
-  username: string;
-}
+// Two ways to obtain the gateway connection, preferred first:
+//   1. Auto-build from console data (no manual copy): account id = the workspace namespace, host/port
+//      = the console SSH-config endpoint (its `region_type` taken from the notebook, see
+//      `regionTypeFromNotebookUrl`), server name = the notebook name.
+//   2. Parse the command from the console's "Подключение по SSH" dialog (manual override / recovery):
+//        ssh my-notebook.ai0000000-00001@ssh-jupyter.ai.cloud.ru -p 2222 -i <key>
+//             └── server name ──┘ └─ account id ─┘ └──────── gateway host ────────┘
 
 export interface ParsedSshCommand {
   host: string;
@@ -18,8 +15,32 @@ export interface ParsedSshCommand {
   accountId: string;
 }
 
-export const DEFAULT_SSH_HOST_TEMPLATE = "ssh-{pool}-jupyter.ai.cloud.ru";
+export const DEFAULT_SSH_HOST = "ssh-jupyter.ai.cloud.ru";
 export const DEFAULT_SSH_PORT = 2222;
+export const DEFAULT_REGION_TYPE = "MT";
+
+export interface SshEndpoint {
+  host: string;
+  port: number;
+  accountId: string;
+}
+
+/**
+ * The `region_type` query param for the console SSH-config endpoint, read from the notebook URL
+ * prefix suffix (`/a100-mt/notebook/…` → `MT`); defaults to `MT` when there is no recognizable suffix.
+ */
+export function regionTypeFromNotebookUrl(url: string | null | undefined): string {
+  if (!url) return DEFAULT_REGION_TYPE;
+  let pathname: string;
+  try {
+    pathname = new URL(url).pathname;
+  } catch {
+    return DEFAULT_REGION_TYPE;
+  }
+  const segment = pathname.split("/").find((part) => part.length > 0);
+  const dash = segment ? segment.lastIndexOf("-") : -1;
+  return segment && dash >= 0 ? segment.slice(dash + 1).toUpperCase() : DEFAULT_REGION_TYPE;
+}
 
 /** Parse the SSH command shown in the console's SSH dialog. */
 export function parseSshCommand(command: string): ParsedSshCommand | undefined {
@@ -32,19 +53,6 @@ export function parseSshCommand(command: string): ParsedSshCommand | undefined {
   const portMatch = command.match(/-p\s+(\d+)/);
   const port = portMatch ? Number(portMatch[1]) : DEFAULT_SSH_PORT;
   return { host, port, serverName: user.slice(0, dot), accountId: user.slice(dot + 1) };
-}
-
-/** Derive the GPU/region pool from a notebook URL prefix (`/a100-mt/notebook/…` → `a100`). */
-export function sshPoolFromNotebookUrl(notebookUrl: string): string | undefined {
-  const { prefix } = parseNotebookUrl(notebookUrl);
-  const first = prefix.split("/").find((segment) => segment.length > 0);
-  return first ? first.replace(/-mt$/i, "") : undefined;
-}
-
-/** Build the pool-specific SSH host from a template, or undefined when the pool can't be derived. */
-export function deriveSshHost(notebookUrl: string, template = DEFAULT_SSH_HOST_TEMPLATE): string | undefined {
-  const pool = sshPoolFromNotebookUrl(notebookUrl);
-  return pool ? template.replace("{pool}", pool) : undefined;
 }
 
 export function buildUsername(serverName: string, accountId: string): string {

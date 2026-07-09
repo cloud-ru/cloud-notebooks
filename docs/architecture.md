@@ -51,7 +51,7 @@ flowchart LR
     subgraph CLOUD["Cloud.ru"]
         ID["id.cloud.ru<br/>(OIDC / SSO)"]
         CONSOLE["console.cloud.ru/aicloud/ui<br/>(web-API консоли)"]
-        GW["SSH-шлюз<br/>ssh-&lt;pool&gt;-jupyter.ai.cloud.ru:2222"]
+        GW["SSH-шлюз<br/>ssh-jupyter.ai.cloud.ru:2222"]
         POD["Под ноутбука<br/>JupyterLab :8888 + sshd"]
     end
 
@@ -139,7 +139,17 @@ sequenceDiagram
 ```
 
 Детали: `ConsoleTokenProvider` сериализует запуски браузера (общий профиль не терпит параллельного
-доступа — чистится `SingletonLock`). Токен живёт ~5 минут, обновление автоматическое.
+доступа — чистится `SingletonLock`). Токен живёт ~5 минут. Обновление автоматическое: `ConsoleApiClient`
+на ответ `401` принудительно сминчивает свежий токен (`getAccessToken(forceRefresh)`) и повторяет
+запрос один раз — протухший токен восстанавливается прозрачно, а не роняет сессию.
+
+Когда тихий mint не может выдать валидный токен (SSO-сессия истекла или отозвана), восстановить
+нечего: `getAccessToken` помечает сессию выходом (`signedIn = false`), шлёт `onDidChangeAuth(false)`
+— дерево возвращается к welcome-экрану «Sign in to Cloud.ru», а последующие вызовы API
+коротко замыкаются — и один раз показывает уведомление «Cloud.ru session expired» с кнопкой
+**Sign In**, после чего бросает типизированную `NotSignedInError`. Вызывающие
+(`NotebooksTreeProvider`, `CloudruServerProvider`) распознают её и не сыплют поверх общим
+тостом-ошибкой. Так пользователь видит явный призыв перелогиниться вместо бесконечной загрузки.
 
 ---
 
@@ -223,8 +233,13 @@ flowchart LR
 
 ## Поток 5. Файлы по SSH и полный IDE-режим
 
-Подключение к поду: `ssh <server-name>.<account-id>@ssh-<pool>-jupyter.ai.cloud.ru -p 2222 -i <key>`
-(для старых ключей предлагается `ssh-rsa`). Корень — `/home/jovyan`.
+Подключение к поду: `ssh <server-name>.<account-id>@<gateway-host> -p 2222 -i <key>`
+(для старых ключей предлагается `ssh-rsa`). Корень — `/home/jovyan`. Эндпоинт шлюза собирается из
+данных консоли без копирования команды (`SshConfig.deriveEndpoint`): account-id = namespace активного
+воркспейса (`/user/v1/workspaces/`); host/port — из `GET /jup_web_app/v3/notebooks/config?region_type=<RT>`,
+где в ответе ищется регион с `key === notebook.region` (напр. `SR008`) и берётся его `ssh.url` / `ssh.port`;
+server-name = имя ноутбука. Если данных нет или подключение не удалось — пользователь вставляет команду
+из консоли, и она кешируется в `globalState` по региону как ручной override (имеет приоритет).
 
 - **Браузер файлов** — `CloudruSshFsProvider` реализует `FileSystemProvider` для схемы
   `cloudru-ssh://`, поверх SFTP-канала `SshConnection`. Цели подключения сохраняются в `globalState`,
@@ -260,7 +275,10 @@ sequenceDiagram
 ```
 
 Тело запроса для запуска строит `resumeBody.ts` (чистый, тестируемый модуль) из метаданных ноутбука.
-`namespace` берётся из самого ноутбука, не из контекста воркспейса.
+`namespace` для эндпоинта берётся из выбранного воркспейса (поле `namespace` из
+`/user/v1/workspaces/`, сохраняется в `WorkspaceContext`) — это авторитетный k8s-namespace, в котором
+живёт под; namespace самого ноутбука используется как fallback (например, на ручном вводе id
+воркспейса). Список `/notebooks/v2/` namespace не всегда отдаёт, поэтому опора на воркспейс надёжнее.
 
 ---
 

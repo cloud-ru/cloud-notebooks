@@ -32,23 +32,43 @@ export class SshController {
       return;
     }
 
-    const target = await this.deps.config.resolveTarget(notebook);
-    if (!target) return;
-    this.deps.provider.register(notebook.uid, target);
+    if ((await this.connectAndMount(notebook)) !== "failed") return;
 
+    // The auto-derived endpoint may be wrong (e.g. an older gateway scheme). Offer the console
+    // command as a manual override and retry; the override then wins for the whole region.
+    const choice = await vscode.window.showErrorMessage(
+      `Could not connect to “${notebook.name}” over SSH.`,
+      "Enter SSH command",
+    );
+    if (choice !== "Enter SSH command") return;
+    if (!(await this.deps.config.captureEndpoint(notebook))) return;
+    if ((await this.connectAndMount(notebook)) === "failed") {
+      void vscode.window.showErrorMessage(`SSH connection to “${notebook.name}” still failed.`);
+    }
+  }
+
+  /** Resolve the target, open the SFTP channel and mount the home folder. `"no-config"` means the
+   * user cancelled a prompt (no recovery offered); `"failed"` means the connection itself failed. */
+  private async connectAndMount(
+    notebook: NotebookHandlerResponse,
+  ): Promise<"ok" | "no-config" | "failed"> {
+    const target = await this.deps.config.resolveTarget(notebook);
+    if (!target) return "no-config";
+    this.deps.provider.register(notebook.uid, target);
     try {
       const root = await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: `Connecting to ${notebook.name} over SSH…` },
         () => this.deps.provider.resolveHome(notebook.uid),
       );
       this.mount(notebook, root);
+      return "ok";
     } catch (err) {
       this.deps.logger.error(`SSH connect failed for ${target.host}`, err);
-      void vscode.window.showErrorMessage(`SSH connection failed: ${(err as Error).message}`);
+      return "failed";
     }
   }
 
-  /** Re-enter the private key and account id. */
+  /** Re-pick the private key and forget cached SSH endpoints. */
   async configure(): Promise<void> {
     await this.deps.config.configure();
   }

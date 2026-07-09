@@ -77,6 +77,25 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
       tree.setAuthor(picked === "All authors" ? undefined : picked);
     }),
 
+    run("cloudru.filterByStatus", async () => {
+      const statuses = tree.statuses();
+      if (statuses.length === 0) {
+        void vscode.window.showInformationMessage("No notebooks loaded yet to filter by status.");
+        return;
+      }
+      const active = new Set(tree.currentStatuses());
+      const picked = await vscode.window.showQuickPick(
+        statuses.map((status) => ({ label: status, picked: active.has(status) })),
+        {
+          title: "Filter notebooks by status",
+          canPickMany: true,
+          ignoreFocusOut: true,
+        },
+      );
+      if (picked === undefined) return; // cancelled — keep current filter
+      tree.setStatuses(picked.map((p) => p.label));
+    }),
+
     run("cloudru.toggleFavoritesFilter", async () => {
       tree.toggleFavoritesOnly();
     }),
@@ -124,9 +143,15 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
       const item = args[0] as NotebookTreeItem | undefined;
       const ws = session.get();
       if (!item || !ws) return;
-      const { namespace, name } = item.notebook;
+      const { name } = item.notebook;
+      // The resume endpoint is keyed by the workspace's k8s namespace. Prefer the workspace
+      // namespace (reliably returned by /user/v1/workspaces/); the per-notebook namespace is a
+      // fallback for the manual-id path where the workspace list was unavailable.
+      const namespace = ws.namespace ?? item.notebook.namespace;
       if (!namespace) {
-        void vscode.window.showErrorMessage(`Cannot resume “${name}”: missing namespace.`);
+        void vscode.window.showErrorMessage(
+          `Cannot start “${name}”: workspace namespace is unknown. Re-run “Cloud.ru: Select Workspace” and try again.`,
+        );
         return;
       }
       await client.resumeNotebook(ws, namespace, buildResumeBody(item.notebook));
@@ -174,7 +199,15 @@ async function selectWorkspace(client: ConsoleApiClient, session: SessionStore, 
 
   const chosen = workspaces.length === 1 ? workspaces[0] : await pickWorkspace(workspaces);
   if (!chosen) return;
-  await session.set({ workspaceId: chosen.workspace_id, workspaceName: chosen.workspace_name });
+  await session.set({
+    workspaceId: chosen.workspace_id,
+    workspaceName: chosen.workspace_name,
+    ...(chosen.namespace ? { namespace: chosen.namespace } : {}),
+  });
+  logger.info(
+    `[ws] selected "${chosen.workspace_name}" (id=${chosen.workspace_id}, namespace=${chosen.namespace ?? "—"}); ` +
+      `fields: ${Object.keys(chosen).join(", ")}`,
+  );
   void vscode.window.showInformationMessage(`Cloud.ru workspace: ${chosen.workspace_name}`);
 }
 

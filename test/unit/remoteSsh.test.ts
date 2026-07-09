@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { formatHostStanza, upsertSshConfigBlock } from "../../src/ssh/sshConfigFile";
 
 const entry = {
-  host: "ssh-a100-jupyter.ai.cloud.ru",
+  host: "ssh-jupyter.ai.cloud.ru",
   port: 2222,
   username: "nb.ai0000000-00000",
   identityFile: "/keys/mlspace key (1).txt",
@@ -12,7 +12,7 @@ describe("formatHostStanza", () => {
   it("quotes paths and forces ssh-rsa + accept-new", () => {
     const stanza = formatHostStanza("cloudru-x", entry, "/g/known_hosts");
     expect(stanza).toContain("Host cloudru-x");
-    expect(stanza).toContain("HostName ssh-a100-jupyter.ai.cloud.ru");
+    expect(stanza).toContain("HostName ssh-jupyter.ai.cloud.ru");
     expect(stanza).toContain('IdentityFile "/keys/mlspace key (1).txt"');
     expect(stanza).toContain("HostKeyAlgorithms +ssh-rsa");
     expect(stanza).toContain("StrictHostKeyChecking accept-new");
