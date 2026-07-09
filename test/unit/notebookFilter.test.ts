@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   describeFilter,
   distinctAuthors,
+  distinctStatuses,
   filterNotebooks,
   isFilterActive,
 } from "../../src/views/notebookFilter";
@@ -55,6 +56,20 @@ describe("filterNotebooks", () => {
     const out = filterNotebooks(list, { search: "train", author: "bob@x" }, noFav).map((n) => n.uid);
     expect(out).toEqual(["3"]);
   });
+
+  it("filters by status set", () => {
+    const mixed = [
+      nb({ uid: "1", status: "running" }),
+      nb({ uid: "2", status: "paused" }),
+      nb({ uid: "3", status: "paused_by_timer" }),
+    ];
+    const out = filterNotebooks(mixed, { statuses: ["paused", "paused_by_timer"] }, noFav).map((n) => n.uid);
+    expect(out.sort()).toEqual(["2", "3"]);
+  });
+
+  it("ignores an empty status set", () => {
+    expect(filterNotebooks(list, { statuses: [] }, noFav)).toHaveLength(3);
+  });
 });
 
 describe("distinctAuthors", () => {
@@ -63,15 +78,25 @@ describe("distinctAuthors", () => {
   });
 });
 
+describe("distinctStatuses", () => {
+  it("returns sorted unique statuses", () => {
+    const mixed = [nb({ status: "running" }), nb({ status: "paused" }), nb({ status: "running" })];
+    expect(distinctStatuses(mixed)).toEqual(["paused", "running"]);
+  });
+});
+
 describe("isFilterActive / describeFilter", () => {
   it("detects active filters", () => {
     expect(isFilterActive({})).toBe(false);
     expect(isFilterActive({ search: "  " })).toBe(false);
     expect(isFilterActive({ author: "bob@x" })).toBe(true);
+    expect(isFilterActive({ statuses: [] })).toBe(false);
+    expect(isFilterActive({ statuses: ["running"] })).toBe(true);
   });
 
   it("describes the active filter", () => {
     expect(describeFilter({})).toBeUndefined();
     expect(describeFilter({ author: "bob@x", favoritesOnly: true })).toContain("author: bob@x");
+    expect(describeFilter({ statuses: ["running", "paused"] })).toContain("status: running, paused");
   });
 });

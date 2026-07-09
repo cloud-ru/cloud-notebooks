@@ -10,6 +10,7 @@ import { SshConnection } from "../ssh/connection";
 import type { SshConfig } from "../ssh/sshConfig";
 import { buildKernelBaseUrl } from "./kernelUrl";
 import { parseNotebookUrl } from "./notebookUrl";
+import { NotSignedInError } from "../console/tokenProvider";
 
 const POD_JUPYTER_PORT = 8888;
 
@@ -43,6 +44,10 @@ export class CloudruServerProvider implements JupyterServerProvider {
       for (const nb of running) this.notebooks.set(nb.uid, nb);
       return running.map((nb) => ({ id: nb.uid, label: nb.name }));
     } catch (err) {
+      if (err instanceof NotSignedInError) {
+        this.deps.logger.info("provideJupyterServers: Cloud.ru session expired; prompting re-auth.");
+        return [];
+      }
       this.deps.logger.error("provideJupyterServers failed", err);
       return [];
     }

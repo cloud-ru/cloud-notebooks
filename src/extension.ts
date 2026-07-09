@@ -27,7 +27,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(auth);
   const client = new ConsoleApiClient({
     baseUrl: consoleBaseUrl,
-    getToken: () => auth.getAccessToken(),
+    getToken: (forceRefresh) => auth.getAccessToken(forceRefresh),
+    logger,
   });
 
   const session = new SessionStore(context.secrets);
@@ -47,7 +48,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(notebooksView);
   tree.attachView(notebooksView);
 
-  const sshConfig = new SshConfig(context);
+  const sshConfig = new SshConfig(context, { client, getWorkspace: () => session.get(), logger });
 
   const notebooks = new NotebookViewController({ config: sshConfig, logger });
   context.subscriptions.push(notebooks);

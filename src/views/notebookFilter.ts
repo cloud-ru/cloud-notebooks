@@ -8,10 +8,14 @@ export interface NotebookFilter {
   author?: string;
   /** Show only notebooks marked as favorite. */
   favoritesOnly?: boolean;
+  /** Keep only notebooks whose raw status is in this set. Empty/undefined = all statuses. */
+  statuses?: string[];
 }
 
 export function isFilterActive(filter: NotebookFilter): boolean {
-  return Boolean(filter.search?.trim() || filter.author || filter.favoritesOnly);
+  return Boolean(
+    filter.search?.trim() || filter.author || filter.favoritesOnly || filter.statuses?.length,
+  );
 }
 
 /** Apply the filter, then sort favorites first and (within each group) newest first. */
@@ -25,6 +29,7 @@ export function filterNotebooks(
     if (query && !nb.name.toLowerCase().includes(query)) return false;
     if (filter.author && nb.author !== filter.author) return false;
     if (filter.favoritesOnly && !isFavorite(nb.uid)) return false;
+    if (filter.statuses?.length && !filter.statuses.includes(nb.status)) return false;
     return true;
   });
 
@@ -40,11 +45,17 @@ export function distinctAuthors(notebooks: NotebookHandlerResponse[]): string[] 
   return [...new Set(notebooks.map((nb) => nb.author))].filter(Boolean).sort();
 }
 
+/** Distinct statuses present in the list, sorted, for the status-filter picker. */
+export function distinctStatuses(notebooks: NotebookHandlerResponse[]): string[] {
+  return [...new Set(notebooks.map((nb) => nb.status as string))].filter(Boolean).sort();
+}
+
 /** Short human description of the active filter, or undefined when none. */
 export function describeFilter(filter: NotebookFilter): string | undefined {
   const parts: string[] = [];
   if (filter.search?.trim()) parts.push(`name ~ "${filter.search.trim()}"`);
   if (filter.author) parts.push(`author: ${filter.author}`);
   if (filter.favoritesOnly) parts.push("favorites only");
+  if (filter.statuses?.length) parts.push(`status: ${filter.statuses.join(", ")}`);
   return parts.length ? `Filtered — ${parts.join(", ")}` : undefined;
 }
