@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import type { ConsoleApiClient } from "../console/apiClient";
+import { NotSignedInError } from "../console/tokenProvider";
 import { ApiError } from "../api/errors";
 import type { NotebookHandlerResponse } from "../api/types";
 import type { SessionStore } from "../session/sessionStore";
@@ -9,6 +10,7 @@ import type { FavoritesStore } from "./favoritesStore";
 import {
   describeFilter,
   distinctAuthors,
+  distinctStatuses,
   filterNotebooks,
   isFilterActive,
   type NotebookFilter,
@@ -84,6 +86,12 @@ export class NotebooksTreeProvider implements vscode.TreeDataProvider<NotebookTr
     this.onFilterChanged();
   }
 
+  setStatuses(values: string[] | undefined): void {
+    if (values && values.length) this.filter.statuses = values;
+    else delete this.filter.statuses;
+    this.onFilterChanged();
+  }
+
   toggleFavoritesOnly(): void {
     if (this.filter.favoritesOnly) delete this.filter.favoritesOnly;
     else this.filter.favoritesOnly = true;
@@ -98,6 +106,16 @@ export class NotebooksTreeProvider implements vscode.TreeDataProvider<NotebookTr
   /** Distinct authors from the most recent fetch, for the author-filter picker. */
   authors(): string[] {
     return distinctAuthors(this.lastNotebooks);
+  }
+
+  /** Distinct statuses from the most recent fetch, for the status-filter picker. */
+  statuses(): string[] {
+    return distinctStatuses(this.lastNotebooks);
+  }
+
+  /** Statuses currently selected in the filter, for pre-checking the status picker. */
+  currentStatuses(): string[] {
+    return this.filter.statuses ?? [];
   }
 
   async toggleFavorite(uid: string): Promise<void> {
@@ -121,6 +139,7 @@ export class NotebooksTreeProvider implements vscode.TreeDataProvider<NotebookTr
       const visible = filterNotebooks(this.lastNotebooks, this.filter, (uid) => this.deps.favorites.has(uid));
       return visible.map((nb) => new NotebookTreeItem(nb, this.deps.favorites.has(nb.uid)));
     } catch (err) {
+      if (err instanceof NotSignedInError) return []; // provider flips auth + prompts; welcome view takes over
       const message = err instanceof ApiError ? err.message : `Failed to load notebooks: ${String(err)}`;
       this.deps.logger.error("listNotebooks failed", err);
       void vscode.window.showErrorMessage(message);

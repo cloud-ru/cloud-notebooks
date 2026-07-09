@@ -47,4 +47,7 @@ export interface NotebookHandlerResponse {
 export interface WorkspaceContext {
   workspaceId: string;
   workspaceName: string;
+  /** Kubernetes namespace of the workspace (from /user/v1/workspaces/). Authoritative source for
+   * the resume endpoint, which is keyed by namespace. */
+  namespace?: string;
 }

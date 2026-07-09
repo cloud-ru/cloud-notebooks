@@ -20,7 +20,7 @@
 ## Возможности
 
 - **Вход через Cloud.ru** — по SSO в браузере, без ключей и без регистрации OAuth-клиента.
-- **Список ноутбуков** воркспейса с живым статусом; поиск по имени, фильтр по автору, избранное.
+- **Список ноутбуков** воркспейса с живым статусом; поиск по имени, фильтр по автору и статусу, избранное.
 - **Открытие веб-UI ноутбука внутри VS Code** — JupyterLab, marimo, VS Code-образ и другие.
 - **Удалённое ядро (как в Colab)** — ячейки исполняются на облачном ядре через стандартное
   Jupyter-расширение.
@@ -72,7 +72,8 @@ pnpm bundle       # разовая сборка
 
 ## Команды
 
-Все доступны через палитру (`Cmd/Ctrl+Shift+P`, префикс «Cloud.ru:») и контекстное меню дерева.
+Все доступны через палитру (`Cmd/Ctrl+Shift+P`, префикс «Cloud.ru:») и меню **«…»** на строке ноутбука
+(действия описаны словами). Фильтры собраны в меню-воронку в шапке вью.
 
 | Команда | Действие |
 |---------|----------|
@@ -81,11 +82,11 @@ pnpm bundle       # разовая сборка
 | Refresh Notebooks | Обновить список |
 | Open Notebook in VS Code | Открыть веб-UI ноутбука в редакторе |
 | Open Notebook in Browser | Открыть ноутбук во внешнем браузере |
-| Start (Resume) / Pause Notebook | Запустить / поставить на паузу |
+| Start / Pause Notebook | Запустить / поставить на паузу |
 | Browse Notebook Files (SSH) | Открыть файлы пода по SFTP |
 | Open Full IDE (Remote-SSH) | Открыть под как Remote-SSH окно |
 | Configure SSH | Настроить ключ и account-id |
-| Search / Filter by Author / Favorites | Поиск, фильтр по автору, избранное |
+| Search / Filter by Author / Filter by Status / Favorites | Поиск, фильтр по автору и статусу, избранное |
 
 ---
 
@@ -97,7 +98,7 @@ pnpm bundle       # разовая сборка
 | `cloudru.console.url` | `https://console.cloud.ru/` | URL, открываемый для входа и захвата токена |
 | `cloudru.notebook.chromePath` | `` (автоопределение) | Путь к Chrome/Chromium/Edge для входа |
 | `cloudru.ssh.privateKeyPath` | `` | SSH-ключ ML Space (для файлов, ядра, IDE) |
-| `cloudru.ssh.hostTemplate` | `ssh-{pool}-jupyter.ai.cloud.ru` | Шаблон хоста SSH-шлюза (`{pool}` из ноутбука) |
+| `cloudru.ssh.host` | `ssh-jupyter.ai.cloud.ru` | Дефолтный хост SSH-шлюза (обычно берётся из вставленной SSH-команды) |
 | `cloudru.ssh.port` | `2222` | Порт SSH-шлюза |
 
 ---

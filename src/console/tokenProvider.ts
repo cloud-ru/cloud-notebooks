@@ -15,6 +15,16 @@ interface CdpCookie {
   value: string;
 }
 
+/** Thrown when the persisted Cloud.ru session can no longer mint a token (SSO expired/revoked). Lets
+ * callers distinguish "must re-authenticate" from real load failures so they skip the generic error
+ * toast — the provider already flips auth state and prompts. */
+export class NotSignedInError extends Error {
+  constructor() {
+    super("Not signed in to Cloud.ru. Run “Cloud.ru: Sign In”.");
+    this.name = "NotSignedInError";
+  }
+}
+
 /**
  * Obtains the Cloud.ru console OIDC Bearer the same way the web app gets it: drive a browser to
  * console.cloud.ru, let the user sign in (SSO), and read the `iframe_auth_cookie` (= the access token)
@@ -23,6 +33,9 @@ interface CdpCookie {
  */
 export class ConsoleTokenProvider {
   private cached: string | undefined;
+  /** One-shot guard for the "session expired" prompt so concurrent failed mints don't stack toasts;
+   * reset on the next successful mint. */
+  private expiryAnnounced = false;
   /** Serializes browser launches so concurrent callers never collide on the profile's SingletonLock. */
   private chain: Promise<string | undefined> = Promise.resolve(undefined);
   private readonly onDidChange = new vscode.EventEmitter<boolean>();
@@ -48,12 +61,36 @@ export class ConsoleTokenProvider {
     this.onDidChange.fire(false);
   }
 
-  /** Valid Bearer for the console API, minting silently from the persisted session when expired. */
-  async getAccessToken(): Promise<string> {
+  /** A silent mint failed → the persisted SSO session is gone. Flip to signed-out (so the tree shows
+   * its sign-in welcome view and later calls short-circuit instead of each stalling ~30s on a headless
+   * mint) and prompt the user to re-authenticate. One-shot until the next successful sign-in. */
+  private async handleExpiredSession(): Promise<void> {
+    if (this.expiryAnnounced || !(await this.isSignedIn())) return;
+    this.expiryAnnounced = true;
+    this.cached = undefined;
+    await this.deps.context.globalState.update(SIGNED_IN_KEY, false);
+    this.onDidChange.fire(false);
+    void this.promptReauth();
+  }
+
+  private async promptReauth(): Promise<void> {
+    const SIGN_IN = "Sign In";
+    const choice = await vscode.window.showWarningMessage(
+      "Cloud.ru session expired. Sign in again to access your notebooks and kernels.",
+      SIGN_IN,
+    );
+    if (choice === SIGN_IN) await this.signIn();
+  }
+
+  /** Valid Bearer for the console API, minting silently from the persisted session when expired.
+   * `forceRefresh` discards the cached token (e.g. after a 401) so the next call re-mints. */
+  async getAccessToken(forceRefresh = false): Promise<string> {
+    if (forceRefresh) this.cached = undefined;
     if (this.cached && !isJwtExpired(this.cached)) return this.cached;
     const token = await this.mint(false);
     if (!token) {
-      throw new Error("Not signed in to Cloud.ru. Run “Cloud.ru: Sign In”.");
+      await this.handleExpiredSession();
+      throw new NotSignedInError();
     }
     return token;
   }
@@ -114,6 +151,7 @@ export class ConsoleTokenProvider {
         const match = cookies.find((c) => c.name === SESSION_COOKIE && c.value && !isJwtExpired(c.value));
         if (match) {
           this.cached = match.value;
+          this.expiryAnnounced = false;
           return match.value;
         }
         await delay(800);
