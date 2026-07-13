@@ -18,6 +18,8 @@ variables:
   VSCE_VERSION: "3.9.2"
   # Keep the pnpm content-addressable store inside the workspace so it can be cached.
   PNPM_STORE_DIR: "$CI_PROJECT_DIR/.pnpm-store"
+  # No TTY in CI: stop `corepack prepare` from hanging on its download-confirmation prompt.
+  COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
 
 default:
   # Node 22 LTS: src/ and the tests use Promise.withResolvers (Node >= 22).
