@@ -20,7 +20,8 @@ variables:
   PNPM_STORE_DIR: "$CI_PROJECT_DIR/.pnpm-store"
 
 default:
-  image: node:20
+  # Node 22 LTS: src/ and the tests use Promise.withResolvers (Node >= 22).
+  image: node:22
   cache:
     # Share the pnpm store across jobs/pipelines; key on the lockfile.
     key:
