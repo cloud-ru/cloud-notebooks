@@ -52,26 +52,36 @@ test:
   script:
     - pnpm run test
 
-package:
+# Shared packaging logic. vsce runs `vscode:prepublish` (production bundle) itself,
+# then packs the pruned production dependencies. Do NOT pass --no-dependencies:
+# puppeteer-core and ssh2 are `external` runtime deps and must ship inside the .vsix.
+.package:
   stage: package
   script:
-    # vsce runs `vscode:prepublish` (production bundle) itself, then packs the
-    # pruned production dependencies. Do NOT pass --no-dependencies: puppeteer-core
-    # and ssh2 are `external` runtime deps and must ship inside the .vsix.
     - pnpm dlx "@vscode/vsce@${VSCE_VERSION}" package
     - ls -lh ./*.vsix
+
+# Branch pushes and merge requests: .vsix kept for QA for 2 weeks.
+package:
+  extends: .package
   artifacts:
     name: "$CI_PROJECT_NAME-$CI_COMMIT_REF_SLUG"
     paths:
       - "*.vsix"
     expire_in: 2 weeks
   rules:
-    # Release builds from tags: keep the artifact indefinitely.
     - if: "$CI_COMMIT_TAG"
-      artifacts:
-        name: "$CI_PROJECT_NAME-$CI_COMMIT_TAG"
-        paths:
-          - "*.vsix"
-    # Otherwise build the .vsix on branch pushes and merge requests.
+      when: never
     - if: "$CI_PIPELINE_SOURCE == 'merge_request_event'"
     - if: "$CI_COMMIT_BRANCH"
+
+# Release builds from git tags: .vsix kept indefinitely.
+package:release:
+  extends: .package
+  artifacts:
+    name: "$CI_PROJECT_NAME-$CI_COMMIT_TAG"
+    paths:
+      - "*.vsix"
+    expire_in: never
+  rules:
+    - if: "$CI_COMMIT_TAG"
