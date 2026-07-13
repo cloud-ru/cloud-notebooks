@@ -101,13 +101,20 @@ SSH-config и URI, статусную модель, список действи�
 ## Сборка .vsix
 
 ```bash
+pnpm install --frozen-lockfile --config.node-linker=hoisted
 pnpm dlx @vscode/vsce package   # → cloudru-jupyter-vscode-<версия>.vsix
 ```
 
 - `vsce` сначала прогоняет `vscode:prepublish` (продакшен-бандл).
+- **`--config.node-linker=hoisted` обязателен.** `vsce` обходит продакшен-зависимости через
+  `npm list`, а обычный (isolated) `node_modules` от pnpm 10 он прочитать не может и падает с
+  `npm error missing: …`. Плоский (hoisted) `node_modules` устраняет проблему. Именно так это
+  делает CI (`.gitlab-ci.yml`).
 - **Не** передавайте `--no-dependencies`: `puppeteer-core` и `ssh2` — реальные рантайм-зависимости,
   помеченные `external`, и должны уехать в `node_modules`. `vsce` включает `dependencies` (не
   `devDependencies`) автоматически.
+- Что попадает в `.vsix`, ограничено `.vscodeignore` (только `dist/`, `package.json`, README,
+  `media/` и продакшен-`node_modules`; исходники/тесты/доки исключены).
 
 Установить локально (для QA или внутренней раздачи):
 
