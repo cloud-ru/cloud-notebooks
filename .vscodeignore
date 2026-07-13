@@ -1,0 +1,31 @@
+# What ships in the .vsix is only the production bundle (dist/extension.js),
+# package.json, README, LICENSE, media, and the pruned production node_modules
+# (vsce includes prod `dependencies` automatically). Everything below is stripped.
+
+# Sources — only the esbuild bundle in dist/ is shipped, never the TS sources.
+src/**
+test/**
+**/*.ts
+**/*.map
+**/*.tsbuildinfo
+
+# Docs & repo meta
+docs/**
+.vscode/**
+.github/**
+.gitlab/**
+
+# Build / tooling config (not needed at runtime)
+esbuild.js
+vitest.config.ts
+tsconfig.json
+.gitlab-ci.yml
+.gitignore
+.vscodeignore
+.editorconfig
+pnpm-lock.yaml
+.npmrc
+
+# Misc
+**/.DS_Store
+*.vsix

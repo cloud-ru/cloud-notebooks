@@ -1,0 +1,77 @@
+# CI/CD for the Cloud.ru ML Space Notebooks VS Code extension.
+#
+#   build   -> typecheck + esbuild bundle  (verify the app compiles/bundles)
+#   test    -> vitest unit suite
+#   package -> build the .vsix for import into VS Code (Extensions -> Install from VSIX)
+#
+# The .vsix is exposed as a job artifact on every pipeline for QA / internal
+# distribution, and retained long-term on Git tags (releases).
+
+stages:
+  - build
+  - test
+  - package
+
+variables:
+  # Pinned so CI is reproducible. Keep PNPM_VERSION in sync with package.json#packageManager.
+  PNPM_VERSION: "10.22.0"
+  VSCE_VERSION: "3.9.2"
+  # Keep the pnpm content-addressable store inside the workspace so it can be cached.
+  PNPM_STORE_DIR: "$CI_PROJECT_DIR/.pnpm-store"
+
+default:
+  image: node:20
+  cache:
+    # Share the pnpm store across jobs/pipelines; key on the lockfile.
+    key:
+      files:
+        - pnpm-lock.yaml
+    paths:
+      - .pnpm-store
+  before_script:
+    - corepack enable
+    - corepack prepare "pnpm@${PNPM_VERSION}" --activate
+    - pnpm config set store-dir "$PNPM_STORE_DIR"
+    # node-linker=hoisted gives a flat node_modules so vsce's production-dependency
+    # walk (which shells out to `npm list`) works under pnpm.
+    - pnpm install --frozen-lockfile --config.node-linker=hoisted
+
+build:
+  stage: build
+  script:
+    - pnpm run typecheck
+    - pnpm run bundle
+  artifacts:
+    name: "dist-$CI_COMMIT_SHORT_SHA"
+    paths:
+      - dist/
+    expire_in: 1 day
+
+test:
+  stage: test
+  script:
+    - pnpm run test
+
+package:
+  stage: package
+  script:
+    # vsce runs `vscode:prepublish` (production bundle) itself, then packs the
+    # pruned production dependencies. Do NOT pass --no-dependencies: puppeteer-core
+    # and ssh2 are `external` runtime deps and must ship inside the .vsix.
+    - pnpm dlx "@vscode/vsce@${VSCE_VERSION}" package
+    - ls -lh ./*.vsix
+  artifacts:
+    name: "$CI_PROJECT_NAME-$CI_COMMIT_REF_SLUG"
+    paths:
+      - "*.vsix"
+    expire_in: 2 weeks
+  rules:
+    # Release builds from tags: keep the artifact indefinitely.
+    - if: "$CI_COMMIT_TAG"
+      artifacts:
+        name: "$CI_PROJECT_NAME-$CI_COMMIT_TAG"
+        paths:
+          - "*.vsix"
+    # Otherwise build the .vsix on branch pushes and merge requests.
+    - if: "$CI_PIPELINE_SOURCE == 'merge_request_event'"
+    - if: "$CI_COMMIT_BRANCH"
