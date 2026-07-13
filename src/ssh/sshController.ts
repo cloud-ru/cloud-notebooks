@@ -27,23 +27,30 @@ export class SshController {
   async openFiles(notebook: NotebookHandlerResponse): Promise<void> {
     if (notebook.status !== "running" || !notebook.url) {
       void vscode.window.showWarningMessage(
-        `Notebook “${notebook.name}” is ${notebook.status}; it must be running to browse its files.`,
+        `«${notebook.name}»: ${notebook.status}. Для просмотра файлов ноутбук должен быть запущен.`,
       );
       return;
     }
 
     if ((await this.connectAndMount(notebook)) !== "failed") return;
 
-    // The auto-derived endpoint may be wrong (e.g. an older gateway scheme). Offer the console
-    // command as a manual override and retry; the override then wins for the whole region.
+    // The auto-derived endpoint may be wrong (e.g. an older gateway scheme). Offer a manual SSH command
+    // override or the SSH settings, then retry; the override then wins for the whole region.
+    const ENTER = "Ввести SSH-команду";
+    const CONFIGURE = "Настроить SSH";
     const choice = await vscode.window.showErrorMessage(
-      `Could not connect to “${notebook.name}” over SSH.`,
-      "Enter SSH command",
+      `Не удалось подключиться к «${notebook.name}» по SSH.`,
+      ENTER,
+      CONFIGURE,
     );
-    if (choice !== "Enter SSH command") return;
+    if (choice === CONFIGURE) {
+      await this.configure();
+      return;
+    }
+    if (choice !== ENTER) return;
     if (!(await this.deps.config.captureEndpoint(notebook))) return;
     if ((await this.connectAndMount(notebook)) === "failed") {
-      void vscode.window.showErrorMessage(`SSH connection to “${notebook.name}” still failed.`);
+      void vscode.window.showErrorMessage(`Подключение к «${notebook.name}» по SSH снова не удалось.`);
     }
   }
 
@@ -71,6 +78,11 @@ export class SshController {
   /** Re-pick the private key and forget cached SSH endpoints. */
   async configure(): Promise<void> {
     await this.deps.config.configure();
+  }
+
+  /** Generate a new ML Space SSH key via the API and configure the extension to use it. */
+  generateKey(): Promise<string | undefined> {
+    return this.deps.config.generateKey();
   }
 
   private mount(notebook: NotebookHandlerResponse, root: string): void {

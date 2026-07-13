@@ -3,9 +3,10 @@
 // through `consoleFetch` (system-CA-trusting https) rather than the global fetch, which fails behind a
 // corporate TLS-inspection proxy. No `vscode` import → unit-testable with an injected fetch.
 import { ApiError, apiErrorFromResponse } from "../api/errors";
-import type { NotebookHandlerResponse, WorkspaceContext } from "../api/types";
+import type { NotebookHandlerResponse, NotebookLogs, ProjectStatus, SshKeyPair, WorkspaceContext } from "../api/types";
 import { consoleFetch, type HttpFetch, type HttpResponse } from "./consoleHttp";
 import { type ConsoleNotebooksResponse, mapConsoleNotebook } from "./notebookMapping";
+import type { ResolvedHarborImage } from "./resumeBody";
 
 const NAMESPACE_HEADER = "cp-front-mlspace-env-jupyter-server";
 
@@ -39,21 +40,28 @@ export interface ConsoleApiClientOptions {
   getToken: (forceRefresh?: boolean) => Promise<string>;
   /** Injected for tests; defaults to the system-CA-trusting https client. */
   fetchImpl?: HttpFetch;
-  /** Optional channel for request diagnostics (e.g. the SSH-config response shape). */
-  logger?: { info(message: string): void };
+  /** Optional channel for request diagnostics (SSH-config shape, unknown statuses). */
+  logger?: { info(message: string): void; warn?(message: string): void };
+  /** Per-request timeout in ms (defaults to consoleHttp's DEFAULT_HTTP_TIMEOUT_MS). Shrinkable in tests. */
+  timeoutMs?: number;
 }
 
 export class ConsoleApiClient {
   private readonly baseUrl: string;
   private readonly getToken: (forceRefresh?: boolean) => Promise<string>;
   private readonly fetchImpl: HttpFetch;
-  private readonly logger: { info(message: string): void } | undefined;
+  private readonly logger: { info(message: string): void; warn?(message: string): void } | undefined;
+  private readonly timeoutMs: number | undefined;
+  /** In-flight listNotebooks calls keyed by workspaceId, so the tree, kernel provider and poller share
+   * one request instead of racing three concurrent silent mints (H8/1.6). */
+  private readonly inFlightList = new Map<string, Promise<NotebookHandlerResponse[]>>();
 
   constructor(opts: ConsoleApiClientOptions) {
     this.baseUrl = opts.baseUrl.replace(/\/+$/, "");
     this.getToken = opts.getToken;
     this.fetchImpl = opts.fetchImpl ?? consoleFetch;
     this.logger = opts.logger;
+    this.timeoutMs = opts.timeoutMs;
   }
 
   /** All workspaces the signed-in user belongs to. Bootstrap call — no x-workspace-id. */
@@ -63,12 +71,21 @@ export class ConsoleApiClient {
   }
 
   async listNotebooks(ws: WorkspaceContext): Promise<NotebookHandlerResponse[]> {
-    const res = await this.send<ConsoleNotebooksResponse>(
+    const existing = this.inFlightList.get(ws.workspaceId);
+    if (existing) return existing;
+    const request = this.send<ConsoleNotebooksResponse>(
       "GET",
       `${this.baseUrl}/notebooks/v2/?include_private=true`,
       { workspaceId: ws.workspaceId },
-    );
-    return (res.notebooks ?? []).map(mapConsoleNotebook);
+    )
+      .then((res) =>
+        (res.notebooks ?? []).map((n) =>
+          mapConsoleNotebook(n, (raw) => this.logger?.warn?.(`[status] unrecognized notebook status "${raw}" → unknown`)),
+        ),
+      )
+      .finally(() => this.inFlightList.delete(ws.workspaceId));
+    this.inFlightList.set(ws.workspaceId, request);
+    return request;
   }
 
   async pauseNotebook(ws: WorkspaceContext, uid: string): Promise<void> {
@@ -83,6 +100,31 @@ export class ConsoleApiClient {
       `${this.baseUrl}/jup_web_app/v3/notebooks/${namespace}/resume_request`,
       { workspaceId: ws.workspaceId, body },
     );
+  }
+
+  /**
+   * Look up a datahub/default Jupyter image by name+tag to recover its labels for the resume body.
+   * Mirrors the web app's docker_images lookup (A1.1/2.4). Returns undefined when nothing matches;
+   * callers treat any failure as "no match" and fall back to empty labels — never blocking resume.
+   */
+  async findResumeImage(
+    ws: WorkspaceContext,
+    params: { region: string; imageName: string; tag: string },
+  ): Promise<ResolvedHarborImage | undefined> {
+    const body = {
+      region_type: "MT",
+      filters: [
+        { field: "type", values: ["datahub", "default"] },
+        { field: "name", values: [params.imageName] },
+        { field: "tag", values: [params.tag] },
+      ],
+      labels: { "mlspace.image.capabilities": ["Jupyter"], "mlspace.cluster.keys": [params.region] },
+    };
+    const res = await this.send<unknown>("POST", `${this.baseUrl}/ar_mgmt/v1/docker_images`, {
+      workspaceId: ws.workspaceId,
+      body,
+    });
+    return firstResumeImage(res);
   }
 
   /** SSH gateway host/port for a notebook's region. The config endpoint returns every region (each
@@ -110,8 +152,59 @@ export class ConsoleApiClient {
     return Number.isFinite(port) && port > 0 ? { url, port } : { url };
   }
 
+  /** Delete a notebook (async — poll the list until it disappears). */
+  async deleteNotebook(ws: WorkspaceContext, uid: string): Promise<void> {
+    await this.send<unknown>("DELETE", `${this.baseUrl}/notebooks/v4/${uid}`, { workspaceId: ws.workspaceId });
+  }
+
+  /** Notebook logs + current status/reason. `namespace` is the workspace namespace (as for resume). */
+  async getNotebookLogs(
+    ws: WorkspaceContext,
+    namespace: string,
+    notebookName: string,
+    region: string,
+  ): Promise<NotebookLogs> {
+    const res = await this.send<Partial<NotebookLogs>>(
+      "GET",
+      `${this.baseUrl}/notebooks/v2/${encodeURIComponent(namespace)}/${encodeURIComponent(notebookName)}` +
+        `/logs?region=${encodeURIComponent(region)}`,
+      { workspaceId: ws.workspaceId },
+    );
+    return {
+      logs: res.logs ?? "",
+      notebook_status: res.notebook_status ?? "",
+      status_reason: res.status_reason ?? "",
+    };
+  }
+
+  /** Project preflight: whether the workspace's project can run/connect notebooks. Missing/blank
+   * response is treated as active so the UI is never blocked on a flaky preflight (mirrors the web). */
+  async getProjectStatus(ws: WorkspaceContext): Promise<ProjectStatus> {
+    const res = await this.send<Partial<ProjectStatus>>("GET", `${this.baseUrl}/notebooks/v2/preflight`, {
+      workspaceId: ws.workspaceId,
+    });
+    return { access: res.access ?? true, ...(res.rejection ? { rejection: res.rejection } : {}) };
+  }
+
+  /** The user's existing ML Space SSH key pair, or undefined if none is provisioned. */
+  async getSshKey(ws: WorkspaceContext): Promise<SshKeyPair | undefined> {
+    const res = await this.send<Partial<SshKeyPair>>("GET", `${this.baseUrl}/user/v1/user_ssh_keys/`, {
+      workspaceId: ws.workspaceId,
+    });
+    if (!res.private_key && !res.public_key) return undefined;
+    return { public_key: res.public_key ?? "", private_key: res.private_key ?? "" };
+  }
+
+  /** Generate a fresh SSH key pair (invalidates the previous one). Returns the private key. */
+  async generateSshKey(ws: WorkspaceContext): Promise<SshKeyPair> {
+    const res = await this.send<Partial<SshKeyPair>>("POST", `${this.baseUrl}/user/v1/user_ssh_keys/generate`, {
+      workspaceId: ws.workspaceId,
+    });
+    return { public_key: res.public_key ?? "", private_key: res.private_key ?? "" };
+  }
+
   private async send<T>(
-    method: "GET" | "POST",
+    method: "GET" | "POST" | "DELETE",
     url: string,
     opts: { workspaceId?: string; body?: unknown },
   ): Promise<T> {
@@ -132,7 +225,7 @@ export class ConsoleApiClient {
   }
 
   private async dispatch(
-    method: "GET" | "POST",
+    method: "GET" | "POST" | "DELETE",
     url: string,
     opts: { workspaceId?: string; body?: unknown },
     forceRefreshToken: boolean,
@@ -144,7 +237,11 @@ export class ConsoleApiClient {
       "front-initiator-namespace": NAMESPACE_HEADER,
     };
     if (opts.workspaceId) headers["x-workspace-id"] = opts.workspaceId;
-    const init: { method: string; headers: Record<string, string>; body?: string } = { method, headers };
+    const init: { method: string; headers: Record<string, string>; body?: string; timeoutMs?: number } = {
+      method,
+      headers,
+    };
+    if (this.timeoutMs !== undefined) init.timeoutMs = this.timeoutMs;
     if (opts.body !== undefined) {
       headers["Content-Type"] = "application/json";
       init.body = JSON.stringify(opts.body);
@@ -153,7 +250,11 @@ export class ConsoleApiClient {
     try {
       return await this.fetchImpl(url, init);
     } catch (cause) {
-      const detail = (cause as { cause?: unknown })?.cause ?? cause;
+      if (cause instanceof ApiError) throw cause; // fetch-layer error (e.g. timeout) already precise
+      let detail: unknown = cause;
+      if (cause && typeof cause === "object" && "cause" in cause && cause.cause !== undefined) {
+        detail = cause.cause;
+      }
       throw new ApiError("network", `Network error contacting the Cloud.ru console: ${String(detail)}`);
     }
   }
@@ -165,4 +266,19 @@ function safeJsonParse(text: string): unknown {
   } catch {
     return undefined;
   }
+}
+
+/** Narrow the docker_images response to the first usable image (name/tag/type/labels), or undefined. */
+function firstResumeImage(res: unknown): ResolvedHarborImage | undefined {
+  if (!res || typeof res !== "object" || !("data" in res)) return undefined;
+  const data = res.data;
+  if (!Array.isArray(data) || data.length === 0) return undefined;
+  const img: unknown = data[0];
+  if (!img || typeof img !== "object") return undefined;
+  const name = "name" in img && typeof img.name === "string" ? img.name : undefined;
+  const tag = "tag" in img && typeof img.tag === "string" ? img.tag : undefined;
+  const type = "type" in img && typeof img.type === "string" ? img.type : undefined;
+  if (name === undefined || tag === undefined || type === undefined) return undefined;
+  const labels = "labels" in img ? img.labels : {};
+  return { name, tag, type, labels };
 }

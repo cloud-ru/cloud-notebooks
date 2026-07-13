@@ -26,7 +26,20 @@ export function splitImageRef(image: string): { name: string; tag: string } {
   return { name: parts.slice(0, -1).join(":"), tag: parts[parts.length - 1] ?? "" };
 }
 
-export function buildResumeBody(notebook: NotebookHandlerResponse): ResumeBody {
+/** A datahub/default image matched via /ar_mgmt/v1/docker_images, carrying its real labels. */
+export interface ResolvedHarborImage {
+  name: string;
+  tag: string;
+  type: string;
+  labels: unknown;
+}
+
+/**
+ * Build the resume payload. Artifact-registry images carry fixed authz/healthz labels. Harbor images
+ * default to empty labels, but if `resolved` is supplied (found via the docker_images lookup) its
+ * name/tag/type/labels win — matching the web app's useResumeNotebookMutation (A1.1/2.4).
+ */
+export function buildResumeBody(notebook: NotebookHandlerResponse, resolved?: ResolvedHarborImage): ResumeBody {
   const image: ResumeImage =
     notebook.imageSource === IMAGE_SOURCE_AR
       ? {
@@ -34,12 +47,20 @@ export function buildResumeBody(notebook: NotebookHandlerResponse): ResumeBody {
           labels: { "mlspace.notebook.authz": "v3", "mlspace.notebook.healthz": "v3" },
           source: IMAGE_SOURCE_AR,
         }
-      : {
-          ...splitImageRef(notebook.image || ""),
-          type: IMAGE_TYPE_DEFAULT,
-          labels: {},
-          source: IMAGE_SOURCE_HARBOR,
-        };
+      : resolved
+        ? {
+            name: resolved.name,
+            tag: resolved.tag,
+            type: resolved.type,
+            labels: resolved.labels,
+            source: IMAGE_SOURCE_HARBOR,
+          }
+        : {
+            ...splitImageRef(notebook.image || ""),
+            type: IMAGE_TYPE_DEFAULT,
+            labels: {},
+            source: IMAGE_SOURCE_HARBOR,
+          };
 
   return {
     name: notebook.name,

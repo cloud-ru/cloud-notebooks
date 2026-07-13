@@ -18,7 +18,7 @@ export async function openFullIde(
 ): Promise<void> {
   if (notebook.status !== "running" || !notebook.url) {
     void vscode.window.showWarningMessage(
-      `Notebook “${notebook.name}” is ${notebook.status}; it must be running to open the full IDE.`,
+      `«${notebook.name}»: ${notebook.status}. Ноутбук должен быть запущен, чтобы открыть полный IDE.`,
     );
     return;
   }
@@ -28,7 +28,7 @@ export async function openFullIde(
   const hasRemoteSsh = vscode.extensions.all.some((ext) => /remote-ssh/i.test(ext.id));
   if (!hasRemoteSsh) {
     void vscode.window.showWarningMessage(
-      "No Remote-SSH extension detected. If the window fails to connect, install “Remote - SSH” (or your editor's equivalent).",
+      "Не найдено расширение Remote-SSH. Если окно не подключится, установите «Remote - SSH» (или аналог для вашего редактора).",
     );
   }
 

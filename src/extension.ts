@@ -11,6 +11,8 @@ import { CloudruSshFsProvider, SSH_SCHEME } from "./ssh/sftpFs";
 import { SshController } from "./ssh/sshController";
 import { SshConfig } from "./ssh/sshConfig";
 import { CloudruServerProvider } from "./jupyter/serverProvider";
+import { CloudruStatusBar } from "./views/statusBar";
+import { AutoRefresh } from "./views/autoRefresh";
 import type { Jupyter } from "@vscode/jupyter-extension";
 
 const AUTH_CONTEXT_KEY = "cloudru.authenticated";
@@ -73,21 +75,57 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(serverProvider);
   await registerJupyterServerCollection(context, serverProvider, logger);
 
-  context.subscriptions.push(...registerCommands({ auth, client, session, tree, notebooks, ssh, logger }));
+  const statusBar = new CloudruStatusBar({
+    isSignedIn: () => auth.isSignedIn(),
+    getWorkspace: () => session.get(),
+  });
+  context.subscriptions.push(statusBar);
 
-  // Keep the `when`-context, the tree, and the kernel servers in sync with auth/workspace changes.
-  await setAuthenticatedContext(await auth.isSignedIn());
+  context.subscriptions.push(
+    ...registerCommands({ auth, client, session, tree, notebooks, serverProvider, ssh, logger }),
+  );
+
+  // Keep the `when`-contexts, the tree, the status bar, and the kernel servers in sync.
+  await syncContexts(await auth.isSignedIn(), auth.sessionExpired, Boolean(session.get()));
+  await statusBar.refresh();
   context.subscriptions.push(
     auth.onDidChangeAuth(async (signedIn) => {
-      await setAuthenticatedContext(signedIn);
+      await syncContexts(signedIn, auth.sessionExpired, Boolean(session.get()));
+      if (!signedIn) {
+        // Signed out: every tunnel/shim/panel belongs to a session we can no longer reach.
+        notebooks.disposeAll();
+        serverProvider.disposeAll();
+      }
+      await statusBar.refresh();
       tree.refresh();
       serverProvider.refresh();
     }),
-    session.onDidChangeWorkspace(() => {
+    session.onDidChangeWorkspace(async () => {
+      // Switching workspace: the cached tunnels point at the previous workspace's notebooks.
+      notebooks.disposeAll();
+      serverProvider.disposeAll();
+      await syncContexts(await auth.isSignedIn(), auth.sessionExpired, Boolean(session.get()));
+      await statusBar.refresh();
       tree.refresh();
       serverProvider.refresh();
     }),
   );
+  context.subscriptions.push(
+    auth.onDidChangeMinting((active) =>
+      tree.setSignInMessage(active ? "Выполняется вход в Cloud.ru…" : undefined),
+    ),
+  );
+
+  const autoRefresh = new AutoRefresh({
+    isActive: async () => (await auth.isSignedIn()) && Boolean(session.get()),
+    hasBusy: () => tree.hasBusyNotebooks(),
+    refresh: () => {
+      tree.refresh();
+      serverProvider.refresh();
+    },
+  });
+  context.subscriptions.push(autoRefresh);
+  autoRefresh.start();
 
   logger.info("Cloud.ru ML Space extension activated.");
 }
@@ -96,8 +134,10 @@ export function deactivate(): void {
   // Disposables are handled via context.subscriptions.
 }
 
-async function setAuthenticatedContext(value: boolean): Promise<void> {
-  await vscode.commands.executeCommand("setContext", AUTH_CONTEXT_KEY, value);
+async function syncContexts(signedIn: boolean, sessionExpired: boolean, workspaceSelected: boolean): Promise<void> {
+  await vscode.commands.executeCommand("setContext", AUTH_CONTEXT_KEY, signedIn);
+  await vscode.commands.executeCommand("setContext", "cloudru.sessionExpired", sessionExpired);
+  await vscode.commands.executeCommand("setContext", "cloudru.workspaceSelected", workspaceSelected);
 }
 
 async function registerJupyterServerCollection(
