@@ -3,18 +3,27 @@
 
 export type NotebookStatus =
   | "creating"
+  | "for_create"
+  | "pulling"
+  | "waiting"
+  | "resuming"
+  | "for_resume"
+  | "running"
+  | "pausing"
+  | "for_pause"
   | "paused"
   | "paused_by_schedule"
   | "paused_by_metrics"
   | "paused_by_timer"
-  | "pausing"
-  | "error"
-  | "resuming"
   | "deleting"
-  | "waiting"
-  | "running"
+  | "for_delete"
+  | "deleted"
+  | "error"
+  | "rejected"
   | "warning"
-  | "fixing";
+  | "fixing"
+  // Synthetic: a status the console returned that we do not recognize (normalizeStatus fallback).
+  | "unknown";
 
 /** Normalized notebook list item used by the tree, SSH, and kernel features. */
 export interface NotebookHandlerResponse {
@@ -30,6 +39,8 @@ export interface NotebookHandlerResponse {
   author: string;
   description?: string | null;
   is_shared: boolean;
+  /** False when this is another user's private notebook the caller may not access. */
+  accessGranted?: boolean;
   portal_ref: string;
   notebookType?: string | null;
   pause_at?: string | null;
@@ -41,6 +52,10 @@ export interface NotebookHandlerResponse {
   imageSource?: string | undefined;
   allocationName?: string | null;
   allocationQueueName?: string | null;
+  /** Access mode: "private" | "shared" | "multiuser". */
+  accessMode?: string | null;
+  /** Enabled auto-shutdown modes, as RU labels (e.g. "по времени"). Empty = auto-shutdown off. */
+  autoshutdownModes?: string[];
 }
 
 /** The active workspace selection (`x-workspace-id`). */
@@ -50,4 +65,23 @@ export interface WorkspaceContext {
   /** Kubernetes namespace of the workspace (from /user/v1/workspaces/). Authoritative source for
    * the resume endpoint, which is keyed by namespace. */
   namespace?: string;
+}
+
+/** Notebook logs response (GET /notebooks/v2/{ns}/{name}/logs). */
+export interface NotebookLogs {
+  logs: string;
+  notebook_status: string;
+  status_reason: string;
+}
+
+/** Project preflight (GET /notebooks/v2/preflight): whether the project can run/connect notebooks. */
+export interface ProjectStatus {
+  access: boolean;
+  rejection?: string;
+}
+
+/** ML Space SSH key pair (GET/POST /user/v1/user_ssh_keys/*). */
+export interface SshKeyPair {
+  public_key: string;
+  private_key: string;
 }

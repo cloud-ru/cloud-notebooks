@@ -55,4 +55,44 @@ describe("buildResumeBody", () => {
     expect(body.allocation_name).toBe("alloc");
     expect(body.queue_name).toBe("q");
   });
+
+  it("uses the resolved harbor image name/tag/type/labels over the split default", () => {
+    const resolved = {
+      name: "cr.ai.cloud.ru/datahub/pytorch",
+      tag: "2.3.0-cuda12",
+      type: "datahub",
+      labels: { "mlspace.notebook.gpu": "a100", team: "ml" },
+    };
+    const body = buildResumeBody(nb({ imageSource: "harbor", image: "reg/other:ignored" }), resolved);
+    // resolved wins: name/tag come from the lookup (not splitImageRef of "reg/other:ignored"),
+    // and its non-empty labels replace the default `{}`.
+    expect(body.image).toEqual({
+      name: "cr.ai.cloud.ru/datahub/pytorch",
+      tag: "2.3.0-cuda12",
+      type: "datahub",
+      labels: { "mlspace.notebook.gpu": "a100", team: "ml" },
+      source: "harbor",
+    });
+  });
+
+  it("defaults a harbor image to split name/tag, type default and empty labels without resolved", () => {
+    const body = buildResumeBody(nb({ imageSource: "harbor", image: "reg/img:v2" }));
+    expect(body.image).toEqual({
+      name: "reg/img",
+      tag: "v2",
+      type: "default",
+      labels: {},
+      source: "harbor",
+    });
+  });
+
+  it("ignores resolved for an artifact_registry image", () => {
+    const resolved = { name: "should-not-appear", tag: "x", type: "datahub", labels: { a: 1 } };
+    const body = buildResumeBody(nb({ imageSource: "artifact_registry", image: "ar-image" }), resolved);
+    expect(body.image).toEqual({
+      name: "ar-image",
+      labels: { "mlspace.notebook.authz": "v3", "mlspace.notebook.healthz": "v3" },
+      source: "artifact_registry",
+    });
+  });
 });
