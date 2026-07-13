@@ -56,135 +56,72 @@
     "viewsWelcome": [
       {
         "view": "cloudruNotebooks",
-        "contents": "Sign in to Cloud.ru to view the Jupyter Server notebooks created in the ML Space console.\n[Sign in to Cloud.ru](command:cloudru.signIn)",
-        "when": "!cloudru.authenticated"
+        "contents": "Войдите в Cloud.ru, чтобы увидеть Jupyter Server из консоли ML Space.\n[Войти в Cloud.ru](command:cloudru.signIn)",
+        "when": "!cloudru.authenticated && !cloudru.sessionExpired"
       },
       {
         "view": "cloudruNotebooks",
-        "contents": "No workspace selected.\n[Select Workspace](command:cloudru.selectWorkspace)",
-        "when": "cloudru.authenticated"
+        "contents": "Сессия Cloud.ru истекла. Войдите снова, чтобы продолжить.\n[Войти в Cloud.ru](command:cloudru.signIn)",
+        "when": "!cloudru.authenticated && cloudru.sessionExpired"
+      },
+      {
+        "view": "cloudruNotebooks",
+        "contents": "Воркспейс не выбран.\n[Выбрать воркспейс](command:cloudru.selectWorkspace)",
+        "when": "cloudru.authenticated && !cloudru.workspaceSelected"
+      },
+      {
+        "view": "cloudruNotebooks",
+        "contents": "Не удалось загрузить ноутбуки.\n[Повторить](command:cloudru.refreshNotebooks)",
+        "when": "cloudru.authenticated && cloudru.workspaceSelected && cloudru.loadError"
+      },
+      {
+        "view": "cloudruNotebooks",
+        "contents": "В выбранном воркспейсе нет ноутбуков.\n[Создать в консоли](command:cloudru.createNotebookInConsole)\n[Обновить](command:cloudru.refreshNotebooks)",
+        "when": "cloudru.authenticated && cloudru.workspaceSelected && !cloudru.loadError"
       }
     ],
     "commands": [
-      {
-        "command": "cloudru.signIn",
-        "title": "Sign In",
-        "category": "Cloud.ru",
-        "icon": "$(sign-in)"
-      },
-      {
-        "command": "cloudru.signOut",
-        "title": "Sign Out",
-        "category": "Cloud.ru",
-        "icon": "$(sign-out)"
-      },
-      {
-        "command": "cloudru.selectWorkspace",
-        "title": "Select Workspace",
-        "category": "Cloud.ru",
-        "icon": "$(organization)"
-      },
+      { "command": "cloudru.signIn", "title": "Войти", "category": "Cloud.ru" },
+      { "command": "cloudru.signOut", "title": "Выйти", "category": "Cloud.ru" },
+      { "command": "cloudru.selectWorkspace", "title": "Выбрать воркспейс", "category": "Cloud.ru" },
       {
         "command": "cloudru.refreshNotebooks",
-        "title": "Refresh Notebooks",
+        "title": "Обновить список",
         "category": "Cloud.ru",
         "icon": "$(refresh)"
       },
+      { "command": "cloudru.openNotebook", "title": "Открыть в VS Code", "category": "Cloud.ru" },
+      { "command": "cloudru.resumeNotebook", "title": "Запустить", "category": "Cloud.ru" },
+      { "command": "cloudru.pauseNotebook", "title": "Остановить", "category": "Cloud.ru" },
+      { "command": "cloudru.openNotebookFiles", "title": "Файлы по SSH", "category": "Cloud.ru" },
+      { "command": "cloudru.openFullIde", "title": "Полный IDE (Remote-SSH)", "category": "Cloud.ru" },
+      { "command": "cloudru.configureSsh", "title": "Настроить SSH (ключ и аккаунт)", "category": "Cloud.ru" },
       {
-        "command": "cloudru.openNotebook",
-        "title": "Open in VS Code",
-        "category": "Cloud.ru",
-        "icon": "$(notebook)"
-      },
-      {
-        "command": "cloudru.resumeNotebook",
-        "title": "Start Notebook",
-        "category": "Cloud.ru",
-        "icon": "$(run)"
-      },
-      {
-        "command": "cloudru.pauseNotebook",
-        "title": "Pause Notebook",
-        "category": "Cloud.ru",
-        "icon": "$(debug-pause)"
-      },
-      {
-        "command": "cloudru.openNotebookFiles",
-        "title": "Browse Files (SSH)",
-        "category": "Cloud.ru",
-        "icon": "$(folder-opened)"
-      },
-      {
-        "command": "cloudru.openFullIde",
-        "title": "Open Full IDE (Remote-SSH)",
-        "category": "Cloud.ru",
-        "icon": "$(remote-explorer)"
-      },
-      {
-        "command": "cloudru.configureSsh",
-        "title": "Configure SSH (key & account)",
+        "command": "cloudru.generateSshKey",
+        "title": "Получить SSH-ключ (сгенерировать новый)",
         "category": "Cloud.ru"
       },
+      { "command": "cloudru.openNotebookInBrowser", "title": "Открыть в браузере", "category": "Cloud.ru" },
+      { "command": "cloudru.showLogs", "title": "Показать логи", "category": "Cloud.ru" },
+      { "command": "cloudru.deleteNotebook", "title": "Удалить…", "category": "Cloud.ru" },
+      { "command": "cloudru.openMonitoring", "title": "Открыть мониторинг в консоли", "category": "Cloud.ru" },
       {
-        "command": "cloudru.openNotebookInBrowser",
-        "title": "Open in Browser",
-        "category": "Cloud.ru",
-        "icon": "$(link-external)"
+        "command": "cloudru.createNotebookInConsole",
+        "title": "Создать Jupyter Server в консоли…",
+        "category": "Cloud.ru"
       },
-      {
-        "command": "cloudru.searchNotebooks",
-        "title": "Search by Name…",
-        "category": "Cloud.ru",
-        "icon": "$(search)"
-      },
-      {
-        "command": "cloudru.filterByAuthor",
-        "title": "Filter by Author…",
-        "category": "Cloud.ru",
-        "icon": "$(account)"
-      },
-      {
-        "command": "cloudru.filterByStatus",
-        "title": "Filter by Status…",
-        "category": "Cloud.ru",
-        "icon": "$(pulse)"
-      },
-      {
-        "command": "cloudru.toggleFavoritesFilter",
-        "title": "Show Favorites Only",
-        "category": "Cloud.ru",
-        "icon": "$(star)"
-      },
-      {
-        "command": "cloudru.clearFilters",
-        "title": "Clear Filters",
-        "category": "Cloud.ru",
-        "icon": "$(clear-all)"
-      },
-      {
-        "command": "cloudru.addFavorite",
-        "title": "Add to Favorites",
-        "category": "Cloud.ru",
-        "icon": "$(star-empty)"
-      },
-      {
-        "command": "cloudru.removeFavorite",
-        "title": "Remove from Favorites",
-        "category": "Cloud.ru",
-        "icon": "$(star-full)"
-      }
+      { "command": "cloudru.notebookActions", "title": "Действия с ноутбуком…", "category": "Cloud.ru" },
+      { "command": "cloudru.searchNotebooks", "title": "Поиск по имени…", "category": "Cloud.ru" },
+      { "command": "cloudru.filterByAuthor", "title": "Фильтр по автору…", "category": "Cloud.ru" },
+      { "command": "cloudru.filterByStatus", "title": "Фильтр по статусу…", "category": "Cloud.ru" },
+      { "command": "cloudru.toggleFavoritesFilter", "title": "Только избранные", "category": "Cloud.ru" },
+      { "command": "cloudru.clearFilters", "title": "Сбросить фильтры", "category": "Cloud.ru" },
+      { "command": "cloudru.addFavorite", "title": "В избранное", "category": "Cloud.ru" },
+      { "command": "cloudru.removeFavorite", "title": "Убрать из избранного", "category": "Cloud.ru" }
     ],
     "submenus": [
-      {
-        "id": "cloudru.notebookActions",
-        "label": "Notebook Actions",
-        "icon": "$(ellipsis)"
-      },
-      {
-        "id": "cloudru.filterMenu",
-        "label": "Filter Notebooks",
-        "icon": "$(filter)"
-      }
+      { "id": "cloudru.notebookActionsMenu", "label": "Действия", "icon": "$(ellipsis)" },
+      { "id": "cloudru.filterMenu", "label": "Фильтр", "icon": "$(filter)" }
     ],
     "menus": {
       "view/title": [
@@ -204,32 +141,31 @@
           "group": "overflow@1"
         },
         {
-          "command": "cloudru.signOut",
+          "command": "cloudru.createNotebookInConsole",
           "when": "view == cloudruNotebooks && cloudru.authenticated",
           "group": "overflow@2"
+        },
+        {
+          "command": "cloudru.configureSsh",
+          "when": "view == cloudruNotebooks && cloudru.authenticated",
+          "group": "overflow@3"
+        },
+        {
+          "command": "cloudru.generateSshKey",
+          "when": "view == cloudruNotebooks && cloudru.authenticated",
+          "group": "overflow@4"
+        },
+        {
+          "command": "cloudru.signOut",
+          "when": "view == cloudruNotebooks && cloudru.authenticated",
+          "group": "overflow@5"
         }
       ],
       "cloudru.filterMenu": [
-        {
-          "command": "cloudru.searchNotebooks",
-          "when": "view == cloudruNotebooks",
-          "group": "1_filter@1"
-        },
-        {
-          "command": "cloudru.filterByAuthor",
-          "when": "view == cloudruNotebooks",
-          "group": "1_filter@2"
-        },
-        {
-          "command": "cloudru.filterByStatus",
-          "when": "view == cloudruNotebooks",
-          "group": "1_filter@3"
-        },
-        {
-          "command": "cloudru.toggleFavoritesFilter",
-          "when": "view == cloudruNotebooks",
-          "group": "1_filter@4"
-        },
+        { "command": "cloudru.searchNotebooks", "when": "view == cloudruNotebooks", "group": "1_filter@1" },
+        { "command": "cloudru.filterByAuthor", "when": "view == cloudruNotebooks", "group": "1_filter@2" },
+        { "command": "cloudru.filterByStatus", "when": "view == cloudruNotebooks", "group": "1_filter@3" },
+        { "command": "cloudru.toggleFavoritesFilter", "when": "view == cloudruNotebooks", "group": "1_filter@4" },
         {
           "command": "cloudru.clearFilters",
           "when": "view == cloudruNotebooks && cloudru.hasFilter",
@@ -238,12 +174,12 @@
       ],
       "view/item/context": [
         {
-          "submenu": "cloudru.notebookActions",
+          "submenu": "cloudru.notebookActionsMenu",
           "when": "view == cloudruNotebooks && viewItem =~ /^notebook/",
           "group": "inline@1"
         }
       ],
-      "cloudru.notebookActions": [
+      "cloudru.notebookActionsMenu": [
         {
           "command": "cloudru.openNotebook",
           "when": "view == cloudruNotebooks && viewItem =~ /^notebook\\.running/",
@@ -251,7 +187,7 @@
         },
         {
           "command": "cloudru.openNotebookInBrowser",
-          "when": "view == cloudruNotebooks && viewItem =~ /^notebook/",
+          "when": "view == cloudruNotebooks && viewItem =~ /^notebook\\.running/",
           "group": "1_open@2"
         },
         {
@@ -265,6 +201,11 @@
           "group": "2_lifecycle@2"
         },
         {
+          "command": "cloudru.deleteNotebook",
+          "when": "view == cloudruNotebooks && (viewItem =~ /^notebook\\.running/ || viewItem =~ /^notebook\\.paused/ || viewItem =~ /^notebook\\.other/)",
+          "group": "2_lifecycle@3"
+        },
+        {
           "command": "cloudru.openNotebookFiles",
           "when": "view == cloudruNotebooks && viewItem =~ /^notebook\\.running/",
           "group": "3_ssh@1"
@@ -275,14 +216,24 @@
           "group": "3_ssh@2"
         },
         {
+          "command": "cloudru.showLogs",
+          "when": "view == cloudruNotebooks && (viewItem =~ /^notebook\\.running/ || viewItem =~ /^notebook\\.other/)",
+          "group": "4_diag@1"
+        },
+        {
+          "command": "cloudru.openMonitoring",
+          "when": "view == cloudruNotebooks && (viewItem =~ /^notebook\\.running/ || viewItem =~ /^notebook\\.paused/)",
+          "group": "4_diag@2"
+        },
+        {
           "command": "cloudru.addFavorite",
           "when": "view == cloudruNotebooks && viewItem =~ /^notebook/ && !(viewItem =~ /\\.fav$/)",
-          "group": "4_favorites@1"
+          "group": "5_favorites@1"
         },
         {
           "command": "cloudru.removeFavorite",
           "when": "view == cloudruNotebooks && viewItem =~ /\\.fav$/",
-          "group": "4_favorites@1"
+          "group": "5_favorites@1"
         }
       ]
     },
