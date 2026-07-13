@@ -15,6 +15,10 @@ docs/**
 .github/**
 .gitlab/**
 
+# CI pnpm store lives in-tree ($CI_PROJECT_DIR/.pnpm-store) so GitLab can cache it;
+# it must never be packed into the .vsix.
+.pnpm-store/**
+
 # Build / tooling config (not needed at runtime)
 esbuild.js
 vitest.config.ts
@@ -24,6 +28,7 @@ tsconfig.json
 .vscodeignore
 .editorconfig
 pnpm-lock.yaml
+pnpm-workspace.yaml
 .npmrc
 
 # Misc
