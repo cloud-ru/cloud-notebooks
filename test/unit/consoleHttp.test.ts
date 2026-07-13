@@ -1,5 +1,6 @@
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
+import { createRequire } from "node:module";
 import * as zlib from "node:zlib";
 import { afterEach, describe, expect, it } from "vitest";
 import { ApiError } from "../../src/api/errors";
@@ -111,5 +112,37 @@ describe("consoleFetch response", () => {
 
     expect(res.status).toBe(200);
     expect(await res.text()).toBe(raw);
+  });
+
+  it("connects even when http.request/get are patched to throw (VS Code proxy override, #173861)", async () => {
+    const payload = JSON.stringify({ ok: true });
+    const port = await startServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(payload);
+    });
+
+    // Simulate VS Code's default `http.proxySupport: "override"`, which replaces http(s).request/get
+    // (on the CJS module object) with a proxy-forcing agent. A direct connection must still go
+    // through, bypassing the patch. `consoleFetch` and this test share Node's single `node:http`.
+    const httpCjs = createRequire(import.meta.url)("node:http") as typeof http;
+    const originalRequest = httpCjs.request;
+    const originalGet = httpCjs.get;
+    httpCjs.request = (() => {
+      throw new Error("PATCHED http.request must not be used");
+    }) as typeof http.request;
+    httpCjs.get = (() => {
+      throw new Error("PATCHED http.get must not be used");
+    }) as typeof http.get;
+    try {
+      const res = await consoleFetch(`http://127.0.0.1:${port}/user/v1/workspaces/`, {
+        method: "GET",
+        headers: { connection: "close" },
+      });
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe(payload);
+    } finally {
+      httpCjs.request = originalRequest;
+      httpCjs.get = originalGet;
+    }
   });
 });
