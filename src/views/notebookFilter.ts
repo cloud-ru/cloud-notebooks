@@ -1,5 +1,6 @@
 // Pure filtering/sorting for the notebooks tree. No `vscode` → unit-testable.
-import type { NotebookHandlerResponse } from "../api/types";
+import type { NotebookHandlerResponse, NotebookStatus } from "../api/types";
+import { statusLabel } from "../util/notebookStatus";
 
 export interface NotebookFilter {
   /** Case-insensitive substring matched against the notebook name. */
@@ -8,8 +9,8 @@ export interface NotebookFilter {
   author?: string;
   /** Show only notebooks marked as favorite. */
   favoritesOnly?: boolean;
-  /** Keep only notebooks whose raw status is in this set. Empty/undefined = all statuses. */
-  statuses?: string[];
+  /** Keep only notebooks whose status is in this set. Empty/undefined = all statuses. */
+  statuses?: NotebookStatus[];
 }
 
 export function isFilterActive(filter: NotebookFilter): boolean {
@@ -53,9 +54,9 @@ export function distinctStatuses(notebooks: NotebookHandlerResponse[]): string[]
 /** Short human description of the active filter, or undefined when none. */
 export function describeFilter(filter: NotebookFilter): string | undefined {
   const parts: string[] = [];
-  if (filter.search?.trim()) parts.push(`name ~ "${filter.search.trim()}"`);
-  if (filter.author) parts.push(`author: ${filter.author}`);
-  if (filter.favoritesOnly) parts.push("favorites only");
-  if (filter.statuses?.length) parts.push(`status: ${filter.statuses.join(", ")}`);
-  return parts.length ? `Filtered — ${parts.join(", ")}` : undefined;
+  if (filter.search?.trim()) parts.push(`имя ~ "${filter.search.trim()}"`);
+  if (filter.author) parts.push(`автор: ${filter.author}`);
+  if (filter.favoritesOnly) parts.push("только избранные");
+  if (filter.statuses?.length) parts.push(`статус: ${filter.statuses.map(statusLabel).join(", ")}`);
+  return parts.length ? `Фильтр — ${parts.join(", ")}` : undefined;
 }

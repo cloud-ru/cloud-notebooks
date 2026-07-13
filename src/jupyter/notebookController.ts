@@ -7,6 +7,7 @@ import type { SshConfig } from "../ssh/sshConfig";
 import { labPath, parseNotebookUrl } from "./notebookUrl";
 import { openNotebookPanel } from "./notebookPanel";
 import { NotebookShim } from "./shim";
+import { probeHttpAlive } from "./httpProbe";
 
 const POD_JUPYTER_PORT = 8888;
 
@@ -25,7 +26,7 @@ export class NotebookViewController {
   async open(notebook: NotebookHandlerResponse): Promise<void> {
     if (notebook.status !== "running" || !notebook.url) {
       void vscode.window.showWarningMessage(
-        `Notebook “${notebook.name}” is ${notebook.status}; it must be running before it can be opened.`,
+        `«${notebook.name}»: ${notebook.status}. Ноутбук должен быть запущен, чтобы открыть его.`,
       );
       return;
     }
@@ -51,7 +52,13 @@ export class NotebookViewController {
     notebook: NotebookHandlerResponse,
   ): Promise<{ shim: NotebookShim; appPath: string } | undefined> {
     const existing = this.shims.get(notebook.uid);
-    if (existing) return existing;
+    if (existing) {
+      // Reuse only if the shim still reaches a live pod; a pause→resume leaves it wired to a dead
+      // tunnel, which otherwise renders as a webview that spins forever (H10).
+      if (await probeHttpAlive(`${existing.shim.baseUrl}${existing.appPath}`)) return existing;
+      this.deps.logger.info(`Notebook shim for ${notebook.name} is stale; rebuilding.`);
+      this.invalidate(notebook.uid);
+    }
     const target = await this.deps.config.resolveTarget(notebook);
     if (!target) return undefined;
     const connection = this.connections.get(notebook.uid) ?? new SshConnection(target);
@@ -79,7 +86,7 @@ export class NotebookViewController {
       return entry;
     } catch (err) {
       this.deps.logger.error(`Notebook connect failed for ${notebook.name}`, err);
-      void vscode.window.showErrorMessage(`Could not connect to ${notebook.name}: ${(err as Error).message}`);
+      void vscode.window.showErrorMessage(`Не удалось подключиться к «${notebook.name}»: ${(err as Error).message}`);
       return undefined;
     }
   }
@@ -95,13 +102,28 @@ export class NotebookViewController {
     return candidates[candidates.length - 1] ?? "/";
   }
 
-  dispose(): void {
+  /** Drop cached shim/connection/panel for a uid (after a pause/resume) so the next open rebuilds. */
+  invalidate(uid: string): void {
+    this.shims.get(uid)?.shim.dispose();
+    this.connections.get(uid)?.dispose();
+    this.panels.get(uid)?.dispose();
+    this.shims.delete(uid);
+    this.connections.delete(uid);
+    this.panels.delete(uid);
+  }
+
+  /** Tear down everything (sign-out / workspace switch). */
+  disposeAll(): void {
     for (const { shim } of this.shims.values()) shim.dispose();
     for (const connection of this.connections.values()) connection.dispose();
     for (const panel of this.panels.values()) panel.dispose();
     this.shims.clear();
     this.connections.clear();
     this.panels.clear();
+  }
+
+  dispose(): void {
+    this.disposeAll();
   }
 }
 

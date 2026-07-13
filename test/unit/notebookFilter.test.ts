@@ -96,7 +96,7 @@ describe("isFilterActive / describeFilter", () => {
 
   it("describes the active filter", () => {
     expect(describeFilter({})).toBeUndefined();
-    expect(describeFilter({ author: "bob@x", favoritesOnly: true })).toContain("author: bob@x");
-    expect(describeFilter({ statuses: ["running", "paused"] })).toContain("status: running, paused");
+    expect(describeFilter({ author: "bob@x", favoritesOnly: true })).toContain("автор: bob@x");
+    expect(describeFilter({ statuses: ["running", "paused"] })).toContain("статус: Подключен, На паузе");
   });
 });

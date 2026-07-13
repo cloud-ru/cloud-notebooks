@@ -40,6 +40,11 @@ export class ConsoleTokenProvider {
   private chain: Promise<string | undefined> = Promise.resolve(undefined);
   private readonly onDidChange = new vscode.EventEmitter<boolean>();
   readonly onDidChangeAuth = this.onDidChange.event;
+  /** Fires while a silent (headless) mint is in flight, so the tree can show "signing in…" instead of
+   * a bare, seemingly-stuck spinner after a window reload (H8/1.6). */
+  private readonly onMinting = new vscode.EventEmitter<boolean>();
+  readonly onDidChangeMinting = this.onMinting.event;
+  private minting = 0;
 
   constructor(private readonly deps: { context: vscode.ExtensionContext; logger: Logger }) {}
 
@@ -47,24 +52,57 @@ export class ConsoleTokenProvider {
     return this.deps.context.globalState.get<boolean>(SIGNED_IN_KEY, false);
   }
 
+  /** True when the last sign-out was due to an expired SSO session (vs an explicit sign-out or a
+   * fresh, never-signed-in state). Drives the "session expired" welcome view (4.3). */
+  get sessionExpired(): boolean {
+    return this.expiryAnnounced;
+  }
+
+  /** Interactive sign-in: opens a real browser window and waits for the SSO cookie. Wrapped in a
+   * cancellable progress notification so the user knows the extension is waiting on the browser, and
+   * so cancelling actually closes the window instead of leaving it stranded for up to 5 minutes (H5). */
   async signIn(): Promise<boolean> {
-    const token = await this.mint(true);
-    if (!token) return false;
-    await this.deps.context.globalState.update(SIGNED_IN_KEY, true);
-    this.onDidChange.fire(true);
-    return true;
+    let cancelled = false;
+    const token = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        cancellable: true,
+        title: "Завершите вход в окне браузера Cloud.ru…",
+      },
+      (_progress, cancelToken) => {
+        const controller = new AbortController();
+        cancelToken.onCancellationRequested(() => {
+          cancelled = true;
+          controller.abort();
+        });
+        return this.mint(true, controller.signal);
+      },
+    );
+    if (token) {
+      await this.deps.context.globalState.update(SIGNED_IN_KEY, true);
+      this.onDidChange.fire(true);
+      return true;
+    }
+    if (!cancelled) {
+      const RETRY = "Повторить";
+      const choice = await vscode.window.showErrorMessage("Вход в Cloud.ru не выполнен.", RETRY);
+      if (choice === RETRY) return this.signIn();
+    }
+    return false;
   }
 
   async signOut(): Promise<void> {
     this.cached = undefined;
+    this.expiryAnnounced = false; // explicit sign-out is not an "expired session"
     await this.deps.context.globalState.update(SIGNED_IN_KEY, false);
     this.onDidChange.fire(false);
   }
 
   /** A silent mint failed → the persisted SSO session is gone. Flip to signed-out (so the tree shows
    * its sign-in welcome view and later calls short-circuit instead of each stalling ~30s on a headless
-   * mint) and prompt the user to re-authenticate. One-shot until the next successful sign-in. */
-  private async handleExpiredSession(): Promise<void> {
+   * mint) and prompt the user to re-authenticate. One-shot until the next successful sign-in. Public so
+   * command error handling can route a post-retry 401 through the same single path (H7). */
+  async handleExpiredSession(): Promise<void> {
     if (this.expiryAnnounced || !(await this.isSignedIn())) return;
     this.expiryAnnounced = true;
     this.cached = undefined;
@@ -74,9 +112,9 @@ export class ConsoleTokenProvider {
   }
 
   private async promptReauth(): Promise<void> {
-    const SIGN_IN = "Sign In";
+    const SIGN_IN = "Войти";
     const choice = await vscode.window.showWarningMessage(
-      "Cloud.ru session expired. Sign in again to access your notebooks and kernels.",
+      "Сессия Cloud.ru истекла. Войдите снова, чтобы работать с ноутбуками и ядрами.",
       SIGN_IN,
     );
     if (choice === SIGN_IN) await this.signIn();
@@ -87,7 +125,10 @@ export class ConsoleTokenProvider {
   async getAccessToken(forceRefresh = false): Promise<string> {
     if (forceRefresh) this.cached = undefined;
     if (this.cached && !isJwtExpired(this.cached)) return this.cached;
-    const token = await this.mint(false);
+    // Never launch a (headless) browser when the user isn't signed in — that is a 30s stall for
+    // nothing. Only the interactive signIn() path may open a browser while signed out (H2).
+    if (!(await this.isSignedIn())) throw new NotSignedInError();
+    const token = await this.withMinting(() => this.mint(false));
     if (!token) {
       await this.handleExpiredSession();
       throw new NotSignedInError();
@@ -96,16 +137,27 @@ export class ConsoleTokenProvider {
   }
 
   /** Serialize mints so two browser launches never share the profile concurrently. */
-  private mint(interactive: boolean): Promise<string | undefined> {
+  private mint(interactive: boolean, signal?: AbortSignal): Promise<string | undefined> {
     const next = this.chain.then(
-      () => this.doMint(interactive),
-      () => this.doMint(interactive),
+      () => this.doMint(interactive, signal),
+      () => this.doMint(interactive, signal),
     );
     this.chain = next.catch(() => undefined);
     return next;
   }
 
-  private async doMint(interactive: boolean): Promise<string | undefined> {
+  /** Runs a silent mint while broadcasting `onDidChangeMinting`, ref-counted so overlapping mints flip
+   * the flag exactly once at the edges. */
+  private async withMinting<T>(run: () => Promise<T>): Promise<T> {
+    if (this.minting++ === 0) this.onMinting.fire(true);
+    try {
+      return await run();
+    } finally {
+      if (--this.minting === 0) this.onMinting.fire(false);
+    }
+  }
+
+  private async doMint(interactive: boolean, signal?: AbortSignal): Promise<string | undefined> {
     // A queued earlier mint may have already refreshed the token.
     if (!interactive && this.cached && !isJwtExpired(this.cached)) return this.cached;
 
@@ -113,7 +165,7 @@ export class ConsoleTokenProvider {
     const chromePath = findChrome(config.get<string>("notebook.chromePath", ""));
     if (!chromePath) {
       void vscode.window.showErrorMessage(
-        "No Chrome/Chromium found for sign-in. Set “cloudru.notebook.chromePath” to a browser executable.",
+        "Не найден Chrome/Chromium для входа. Укажите путь к браузеру в «cloudru.notebook.chromePath».",
       );
       return undefined;
     }
@@ -128,6 +180,7 @@ export class ConsoleTokenProvider {
         // ignore
       }
     }
+    if (signal?.aborted) return undefined;
     const browser = await puppeteer.launch({
       headless: !interactive,
       executablePath: chromePath,
@@ -135,6 +188,9 @@ export class ConsoleTokenProvider {
       defaultViewport: null,
       args: ["--no-first-run", "--no-default-browser-check"],
     });
+    // Cancelling the sign-in progress must actually close the window (H5), not orphan it for 5 min.
+    const onAbort = (): void => void browser.close().catch(() => undefined);
+    if (signal) signal.addEventListener("abort", onAbort);
     try {
       const page = (await browser.pages())[0] ?? (await browser.newPage());
       const client = await page.target().createCDPSession();
@@ -142,6 +198,7 @@ export class ConsoleTokenProvider {
 
       const deadline = Date.now() + (interactive ? 300_000 : 30_000);
       while (Date.now() < deadline) {
+        if (signal?.aborted) return undefined;
         let cookies: CdpCookie[];
         try {
           ({ cookies } = (await client.send("Network.getAllCookies")) as { cookies: CdpCookie[] });
@@ -161,12 +218,14 @@ export class ConsoleTokenProvider {
       this.deps.logger.error("Console token mint failed", err);
       return undefined;
     } finally {
+      if (signal) signal.removeEventListener("abort", onAbort);
       await browser.close().catch(() => undefined);
     }
   }
 
   dispose(): void {
     this.onDidChange.dispose();
+    this.onMinting.dispose();
   }
 }
 

@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import * as path from "node:path";
 import * as vscode from "vscode";
 import type { NotebookHandlerResponse, WorkspaceContext } from "../api/types";
 import type { ConsoleApiClient, SshGatewayConfig } from "../console/apiClient";
@@ -42,13 +43,18 @@ export class SshConfig {
     private readonly deps: SshConfigDeps,
   ) {}
 
-  /** Build the SSH target for a notebook, prompting for key/endpoint if needed. */
-  async resolveTarget(notebook: NotebookHandlerResponse): Promise<SshConnectionConfig | undefined> {
+  /** Build the SSH target for a notebook. With `interactive: false` (the kernel picker) it never opens
+   * a dialog — it uses only already-configured key/endpoint and returns undefined otherwise (H11). */
+  async resolveTarget(
+    notebook: NotebookHandlerResponse,
+    opts: { interactive?: boolean } = {},
+  ): Promise<SshConnectionConfig | undefined> {
     if (!notebook.url) return undefined;
+    const interactive = opts.interactive ?? true;
 
-    const privateKey = await this.ensurePrivateKey();
+    const privateKey = interactive ? await this.ensurePrivateKey() : this.loadPrivateKey();
     if (!privateKey) return undefined;
-    const endpoint = await this.ensureEndpoint(notebook);
+    const endpoint = await this.ensureEndpoint(notebook, interactive);
     if (!endpoint) return undefined;
 
     const target: PersistedTarget = {
@@ -83,7 +89,7 @@ export class SshConfig {
 
     const identityFile = await this.ensureKeyPath();
     if (!identityFile) return undefined;
-    const endpoint = await this.ensureEndpoint(notebook);
+    const endpoint = await this.ensureEndpoint(notebook, true);
     if (!endpoint) return undefined;
 
     return {
@@ -97,7 +103,7 @@ export class SshConfig {
   /** Path to the configured private key, prompting to pick one if not set. */
   private async ensureKeyPath(): Promise<string | undefined> {
     const configured = vscode.workspace.getConfiguration("cloudru").get<string>("ssh.privateKeyPath", "");
-    const keyPath = configured || (await this.pickPrivateKey());
+    const keyPath = configured || (await this.obtainKeyPath());
     if (keyPath) await this.tightenKeyPermissions(keyPath);
     return keyPath;
   }
@@ -137,8 +143,8 @@ export class SshConfig {
   private async ensurePrivateKey(): Promise<Buffer | undefined> {
     const existing = this.loadPrivateKey();
     if (existing) return existing;
-    const path = (await this.pickPrivateKey()) ?? "";
-    if (!path) return undefined;
+    const keyPath = await this.obtainKeyPath();
+    if (!keyPath) return undefined;
     return this.loadPrivateKey();
   }
 
@@ -149,16 +155,16 @@ export class SshConfig {
     try {
       return fs.readFileSync(path);
     } catch (err) {
-      void vscode.window.showErrorMessage(`Cannot read SSH key at ${path}: ${(err as Error).message}`);
+      void vscode.window.showErrorMessage(`Не удалось прочитать SSH-ключ по пути ${path}: ${(err as Error).message}`);
       return undefined;
     }
   }
 
   private async pickPrivateKey(): Promise<string | undefined> {
     const picked = await vscode.window.showOpenDialog({
-      title: "Select the ML Space SSH private key (downloaded from the console)",
+      title: "Выберите приватный SSH-ключ ML Space (скачан из консоли)",
       canSelectMany: false,
-      openLabel: "Use this key",
+      openLabel: "Использовать ключ",
     });
     const path = picked?.[0]?.fsPath;
     if (path) {
@@ -169,12 +175,83 @@ export class SshConfig {
     return path;
   }
 
+  /** When no key is configured, ask how to provide one — generate via the API or pick a file — rather
+   * than dropping the user straight into a file dialog (3.3). Returns the resolved key path. */
+  private async obtainKeyPath(): Promise<string | undefined> {
+    const GENERATE = "Сгенерировать новый ключ (старый перестанет работать)";
+    const PICK = "Выбрать файл ключа…";
+    const choice = await vscode.window.showQuickPick([GENERATE, PICK], {
+      title: "SSH-ключ ML Space не настроен",
+      placeHolder: "Как получить ключ для доступа к ноутбукам по SSH?",
+      ignoreFocusOut: true,
+    });
+    if (choice === GENERATE) return this.generateKey();
+    if (choice === PICK) return this.pickPrivateKey();
+    return undefined;
+  }
+
+  /** Generate a fresh SSH key via the console API, store it 0600 under globalStorage, point the config
+   * at it, and offer to save a copy. Returns the stored path (undefined on failure). */
+  async generateKey(): Promise<string | undefined> {
+    const ws = this.deps.getWorkspace();
+    if (!ws) {
+      void vscode.window.showWarningMessage("Сначала выберите воркспейс Cloud.ru.");
+      return undefined;
+    }
+    const pair = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: "Генерация SSH-ключа…" },
+      () => this.deps.client.generateSshKey(ws),
+    );
+    if (!pair.private_key) {
+      void vscode.window.showErrorMessage("Сервер не вернул приватный ключ.");
+      return undefined;
+    }
+    const dest = vscode.Uri.joinPath(this.context.globalStorageUri, "ssh", "mlspace.private_key").fsPath;
+    try {
+      await fs.promises.mkdir(path.dirname(dest), { recursive: true });
+      await fs.promises.writeFile(dest, withTrailingNewline(pair.private_key), { mode: 0o600 });
+      await fs.promises.chmod(dest, 0o600);
+    } catch (err) {
+      this.deps.logger.error("[ssh] failed to store generated key", err);
+      void vscode.window.showErrorMessage(`Не удалось сохранить SSH-ключ: ${(err as Error).message}`);
+      return undefined;
+    }
+    await vscode.workspace
+      .getConfiguration("cloudru")
+      .update("ssh.privateKeyPath", dest, vscode.ConfigurationTarget.Global);
+    this.deps.logger.info(`[ssh] generated new SSH key → ${dest}`);
+    await this.offerSaveCopy(pair.private_key);
+    return dest;
+  }
+
+  private async offerSaveCopy(privateKey: string): Promise<void> {
+    const SAVE = "Сохранить копию…";
+    const choice = await vscode.window.showInformationMessage(
+      "Новый SSH-ключ сгенерирован и настроен для расширения.",
+      SAVE,
+    );
+    if (choice !== SAVE) return;
+    const uri = await vscode.window.showSaveDialog({
+      saveLabel: "Сохранить ключ",
+      defaultUri: vscode.Uri.file("mlspace_ssh_key"),
+    });
+    if (!uri) return;
+    try {
+      await fs.promises.writeFile(uri.fsPath, withTrailingNewline(privateKey), { mode: 0o600 });
+    } catch (err) {
+      void vscode.window.showErrorMessage(`Не удалось сохранить копию ключа: ${(err as Error).message}`);
+    }
+  }
+
   /**
    * The gateway endpoint for a notebook. A manual override (saved per region by `captureEndpoint`)
    * wins; otherwise it is auto-derived from the running notebook (host + namespace, no console trip);
    * if that is not possible the user is prompted for the console command.
    */
-  private async ensureEndpoint(notebook: NotebookHandlerResponse): Promise<SshEndpoint | undefined> {
+  private async ensureEndpoint(
+    notebook: NotebookHandlerResponse,
+    interactive: boolean,
+  ): Promise<SshEndpoint | undefined> {
     const region = notebook.region || "";
     const override = this.context.globalState.get<Record<string, SshEndpoint>>(ENDPOINTS_KEY, {})[region];
     if (override) {
@@ -186,6 +263,10 @@ export class SshConfig {
     }
     const derived = await this.deriveEndpoint(notebook);
     if (derived) return derived;
+    if (!interactive) {
+      this.deps.logger.warn(`[ssh] no endpoint for "${notebook.name}" (non-interactive) — refusing to open a dialog`);
+      return undefined;
+    }
     this.deps.logger.warn(
       `[ssh] auto-derivation produced no endpoint for "${notebook.name}" — asking you to paste the SSH command`,
     );
@@ -279,13 +360,13 @@ export class SshConfig {
   private async promptEndpoint(): Promise<SshEndpoint | undefined> {
     const input = (
       await vscode.window.showInputBox({
-        title: "Cloud.ru SSH — paste the connection command (or account id)",
+        title: "Cloud.ru SSH — вставьте команду подключения (или id аккаунта)",
         prompt:
-          "Open the notebook's SSH dialog in the console and paste the whole command here — the gateway " +
-          "host, port and account id are read from it (the “-i <key>” part is ignored; the key file you " +
-          "picked is used). You may also type just the account id to use the configured default host.",
+          "Откройте диалог SSH ноутбука в консоли и вставьте команду целиком — из неё берутся хост, порт " +
+          "и id аккаунта («-i <key>» игнорируется, используется выбранный вами файл ключа). Можно ввести " +
+          "только id аккаунта, чтобы использовать хост по умолчанию.",
         placeHolder:
-          "ssh name.ai0001011-00055@ssh-jupyter.ai.cloud.ru -p 2222   ·   or just  ai0001011-00055",
+          "ssh name.ai0001011-00055@ssh-jupyter.ai.cloud.ru -p 2222   ·   или просто  ai0001011-00055",
         ignoreFocusOut: true,
       })
     )?.trim();
@@ -295,7 +376,7 @@ export class SshConfig {
       const parsed = parseSshCommand(input);
       if (!parsed) {
         void vscode.window.showErrorMessage(
-          "Could not parse the SSH command. Paste the whole line from the console SSH dialog.",
+          "Не удалось разобрать SSH-команду. Вставьте всю строку из диалога SSH в консоли.",
         );
         return undefined;
       }
@@ -304,7 +385,7 @@ export class SshConfig {
 
     if (!/^[A-Za-z]+\d+-\d+$/.test(input)) {
       void vscode.window.showErrorMessage(
-        "Could not read the account id. Paste the full SSH command, or just the id (e.g. ai0001011-00055).",
+        "Не удалось прочитать id аккаунта. Вставьте полную SSH-команду или только id (например, ai0001011-00055).",
       );
       return undefined;
     }
@@ -315,4 +396,8 @@ export class SshConfig {
       accountId: input,
     };
   }
+}
+
+function withTrailingNewline(text: string): string {
+  return text.endsWith("\n") ? text : `${text}\n`;
 }
