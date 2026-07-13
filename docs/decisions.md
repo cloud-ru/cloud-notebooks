@@ -52,8 +52,8 @@ cookie `authservice_session`, а в корпоративной сети Node→�
 ## Р4 — Доверие системному хранилищу CA (корпоративный TLS-перехват)
 
 **Решение:** запросы к API идут не через глобальный `fetch`, а через `consoleHttp.ts` поверх
-`https.request` с агентом из `upstreamAgent.ts`, который добавляет системные корневые сертификаты
-(`tls.getCACertificates("system")`).
+`new http.ClientRequest(...)` с агентом из `upstreamAgent.ts`, который добавляет системные корневые
+сертификаты (`tls.getCACertificates("system")`).
 
 - ➕ Работает за корпоративным прокси, пересоздающим TLS-сертификаты, где `fetch` падает с
   `fetch failed` (Node доверяет только встроенному списку CA).
@@ -62,6 +62,13 @@ cookie `authservice_session`, а в корпоративной сети Node→�
 
 `undici`-диспетчер не подошёл: пакета в проекте нет, а сторонний `Agent` не проходит `instanceof`-
 проверку встроенного `fetch`.
+
+Почему именно `new http.ClientRequest(...)`, а не `https.request(...)`: VS Code по умолчанию
+(`http.proxySupport: "override"`) патчит `http(s).request`/`.get`, выбрасывая переданный агент и
+заворачивая любой запрос в системный/PAC-прокси (microsoft/vscode#173861). Если этот прокси
+недоступен, вызов падает с `Failed to establish a socket connection to proxies`, хотя прямое
+соединение работает (и работает — например, в Cursor, который не навязывает системный прокси).
+Конструктор `ClientRequest` не патчится, поэтому мы сохраняем свой CA-агент и ходим напрямую.
 
 ---
 
