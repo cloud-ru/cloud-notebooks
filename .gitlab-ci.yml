@@ -21,6 +21,16 @@ variables:
   # No TTY in CI: stop `corepack prepare` from hanging on its download-confirmation prompt.
   COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
 
+# Avoid double pipelines: when a branch has an open MR, run only the merge-request
+# pipeline; otherwise run the branch pipeline. Tags always run.
+workflow:
+  rules:
+    - if: "$CI_PIPELINE_SOURCE == 'merge_request_event'"
+    - if: "$CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS"
+      when: never
+    - if: "$CI_COMMIT_BRANCH"
+    - if: "$CI_COMMIT_TAG"
+
 default:
   # Node 22 LTS: src/ and the tests use Promise.withResolvers (Node >= 22).
   image: node:22
@@ -39,7 +49,16 @@ default:
     # walk (which shells out to `npm list`) works under pnpm.
     - pnpm install --frozen-lockfile --config.node-linker=hoisted
 
+# Run in the single active pipeline (merge request, branch, or tag) so build/test
+# always accompany packaging instead of being skipped in MR pipelines.
+.on-change:
+  rules:
+    - if: "$CI_PIPELINE_SOURCE == 'merge_request_event'"
+    - if: "$CI_COMMIT_TAG"
+    - if: "$CI_COMMIT_BRANCH"
+
 build:
+  extends: .on-change
   stage: build
   script:
     - pnpm run typecheck
@@ -51,6 +70,7 @@ build:
     expire_in: 1 day
 
 test:
+  extends: .on-change
   stage: test
   script:
     - pnpm run test
