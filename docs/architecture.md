@@ -106,7 +106,7 @@ flowchart TB
 | UI | `views/notebooksTree.ts`, `commands/index.ts`, `util/notebookStatus.ts` | Дерево ноутбуков, команды, иконки статусов |
 | Встраивание UI | `jupyter/notebookController.ts`, `jupyter/shim.ts`, `jupyter/headerRewrite.ts`, `jupyter/notebookPanel.ts`, `jupyter/notebookUrl.ts` | Туннель к поду + локальный прокси + webview-iframe |
 | Удалённое ядро | `jupyter/serverProvider.ts`, `jupyter/kernelUrl.ts` | Контрибьют ноутбуков как Jupyter-серверов |
-| SSH | `ssh/connection.ts`, `ssh/sftpFs.ts`, `ssh/sshController.ts`, `ssh/sshConfig.ts`, `ssh/remoteSsh.ts`, `ssh/sshConfigFile.ts`, `ssh/sshUrl.ts`, `ssh/sftpErrors.ts` | SFTP-файлы, Remote-SSH, конфиг подключения |
+| SSH | `ssh/connection.ts`, `ssh/sftpFs.ts`, `ssh/sshController.ts`, `ssh/sshConfig.ts`, `ssh/remoteSsh.ts`, `ssh/serverPreseed.ts`, `ssh/sshConfigFile.ts`, `ssh/sshUrl.ts`, `ssh/sftpErrors.ts` | SFTP-файлы, Remote-SSH, pre-seed сервера, конфиг подключения |
 | Инфраструктура | `jupyter/upstreamAgent.ts`, `util/logger.ts`, `extension.ts` | Системные CA, логирование, сборка зависимостей |
 
 ---
@@ -244,7 +244,10 @@ server-name = имя ноутбука. Если данных нет или по�
 - **Браузер файлов** — `CloudruSshFsProvider` реализует `FileSystemProvider` для схемы
   `cloudru-ssh://`, поверх SFTP-канала `SshConnection`. Цели подключения сохраняются в `globalState`,
   тихий реконнект переживает перезагрузку окна.
-- **Полный IDE** — `remoteSsh.ts` дописывает управляемый блок в `~/.ssh/config` и открывает
+- **Полный IDE** — `remoteSsh.ts` дописывает управляемый блок в `~/.ssh/config`, при необходимости
+  предзаливает VS Code Server на под (`serverPreseed.ts`: egress пода к CDN Microsoft затроттлен,
+  поэтому тарбол качается локально с кэшем per-commit и заливается по SFTP через быстрый шлюз;
+  любая ошибка — не блокер, Remote-SSH доставит сервер сам) и открывает
   `vscode-remote://ssh-remote+cloudru-<uid>/home/jovyan`. Поддерживается любой форк Remote-SSH
   (детектится по `/remote-ssh/i`).
 
@@ -329,11 +332,12 @@ src/
     upstreamAgent.ts        https-агент с системными CA
     chrome.ts               поиск исполняемого Chrome/Chromium/Edge
   ssh/
-    connection.ts           один SSH-клиент: SFTP + локальный forward (ssh -L)
+    connection.ts           один SSH-клиент: SFTP + локальный forward (ssh -L) + exec
     sftpFs.ts               FileSystemProvider для cloudru-ssh://
     sshController.ts        команды браузера файлов по SSH
     sshConfig.ts            разрешение цели подключения (ключ, account-id, host)
     remoteSsh.ts            запуск полного Remote-SSH окна
+    serverPreseed.ts        предзаливка VS Code Server на под перед Remote-SSH (чистый модуль)
     sshConfigFile.ts        управляемый блок в ~/.ssh/config (чистый модуль)
     sshUrl.ts               разбор/сборка cloudru-ssh:// URI
     sftpErrors.ts           маппинг ошибок SFTP

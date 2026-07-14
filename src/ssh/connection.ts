@@ -9,6 +9,11 @@ export interface SshConnectionConfig {
   privateKey: Buffer;
   passphrase?: string;
 }
+export interface ExecResult {
+  code: number | null;
+  stdout: string;
+  stderr: string;
+}
 
 /**
  * One SSH client to a notebook's gateway, shared by the SFTP file browser and the local port forward
@@ -61,6 +66,32 @@ export class SshConnection {
     const { promise, resolve, reject } = Promise.withResolvers<number>();
     server.once("error", reject);
     server.listen(0, "127.0.0.1", () => resolve((server.address() as net.AddressInfo).port));
+    return promise;
+  }
+  /**
+   * Run a command on the pod and collect its output. `stdin` (when given) is written to the remote
+   * process and closed — used to feed whole scripts to `sh -s` without shell-quoting them.
+   */
+  async exec(command: string, stdin?: string): Promise<ExecResult> {
+    const client = await this.getClient();
+    const { promise, resolve, reject } = Promise.withResolvers<ExecResult>();
+    client.exec(command, (err, stream) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      let stdout = "";
+      let stderr = "";
+      stream.on("data", (chunk: Buffer) => {
+        stdout += chunk.toString("utf8");
+      });
+      stream.stderr.on("data", (chunk: Buffer) => {
+        stderr += chunk.toString("utf8");
+      });
+      stream.on("error", reject);
+      stream.on("close", (code: number | null) => resolve({ code, stdout, stderr }));
+      if (stdin !== undefined) stream.end(stdin);
+    });
     return promise;
   }
 
