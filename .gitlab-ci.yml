@@ -1,0 +1,110 @@
+# CI/CD for the Cloud.ru ML Space Notebooks VS Code extension.
+#
+#   build   -> typecheck + esbuild bundle  (verify the app compiles/bundles)
+#   test    -> vitest unit suite
+#   package -> build the .vsix for import into VS Code (Extensions -> Install from VSIX)
+#
+# The .vsix is exposed as a job artifact on every pipeline for QA / internal
+# distribution, and retained long-term on Git tags (releases).
+
+stages:
+  - build
+  - test
+  - package
+
+variables:
+  # Pinned so CI is reproducible. Keep PNPM_VERSION in sync with package.json#packageManager.
+  PNPM_VERSION: "10.22.0"
+  VSCE_VERSION: "3.9.2"
+  # Keep the pnpm content-addressable store inside the workspace so it can be cached.
+  PNPM_STORE_DIR: "$CI_PROJECT_DIR/.pnpm-store"
+  # No TTY in CI: stop `corepack prepare` from hanging on its download-confirmation prompt.
+  COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+
+# Avoid double pipelines: when a branch has an open MR, run only the merge-request
+# pipeline; otherwise run the branch pipeline. Tags always run.
+workflow:
+  rules:
+    - if: "$CI_PIPELINE_SOURCE == 'merge_request_event'"
+    - if: "$CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS"
+      when: never
+    - if: "$CI_COMMIT_BRANCH"
+    - if: "$CI_COMMIT_TAG"
+
+default:
+  # Node 22 LTS: src/ and the tests use Promise.withResolvers (Node >= 22).
+  image: node:22
+  cache:
+    # Share the pnpm store across jobs/pipelines; key on the lockfile.
+    key:
+      files:
+        - pnpm-lock.yaml
+    paths:
+      - .pnpm-store
+  before_script:
+    - corepack enable
+    - corepack prepare "pnpm@${PNPM_VERSION}" --activate
+    - pnpm config set store-dir "$PNPM_STORE_DIR"
+    # node-linker=hoisted gives a flat node_modules so vsce's production-dependency
+    # walk (which shells out to `npm list`) works under pnpm.
+    - pnpm install --frozen-lockfile --config.node-linker=hoisted
+
+# Run in the single active pipeline (merge request, branch, or tag) so build/test
+# always accompany packaging instead of being skipped in MR pipelines.
+.on-change:
+  rules:
+    - if: "$CI_PIPELINE_SOURCE == 'merge_request_event'"
+    - if: "$CI_COMMIT_TAG"
+    - if: "$CI_COMMIT_BRANCH"
+
+build:
+  extends: .on-change
+  stage: build
+  script:
+    - pnpm run typecheck
+    - pnpm run bundle
+  artifacts:
+    name: "dist-$CI_COMMIT_SHORT_SHA"
+    paths:
+      - dist/
+    expire_in: 1 day
+
+test:
+  extends: .on-change
+  stage: test
+  script:
+    - pnpm run test
+
+# Shared packaging logic. vsce runs `vscode:prepublish` (production bundle) itself,
+# then packs the pruned production dependencies. Do NOT pass --no-dependencies:
+# puppeteer-core and ssh2 are `external` runtime deps and must ship inside the .vsix.
+.package:
+  stage: package
+  script:
+    - pnpm dlx "@vscode/vsce@${VSCE_VERSION}" package
+    - ls -lh ./*.vsix
+
+# Branch pushes and merge requests: .vsix kept for QA for 2 weeks.
+package:
+  extends: .package
+  artifacts:
+    name: "$CI_PROJECT_NAME-$CI_COMMIT_REF_SLUG"
+    paths:
+      - "*.vsix"
+    expire_in: 2 weeks
+  rules:
+    - if: "$CI_COMMIT_TAG"
+      when: never
+    - if: "$CI_PIPELINE_SOURCE == 'merge_request_event'"
+    - if: "$CI_COMMIT_BRANCH"
+
+# Release builds from git tags: .vsix kept indefinitely.
+package:release:
+  extends: .package
+  artifacts:
+    name: "$CI_PROJECT_NAME-$CI_COMMIT_TAG"
+    paths:
+      - "*.vsix"
+    expire_in: never
+  rules:
+    - if: "$CI_COMMIT_TAG"

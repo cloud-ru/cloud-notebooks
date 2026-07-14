@@ -2,8 +2,16 @@
 // corporate TLS-inspection proxy Node's bundled CA list rejects the re-signed certificate ("fetch
 // failed"), exactly the problem the notebook shim already solves. Reusing `createUpstreamAgent` makes
 // these calls trust the system CA store the same way. Pure (no `vscode`) → unit-testable.
+//
+// We also deliberately construct the request with `new http.ClientRequest(...)` instead of
+// `https.request(...)`. VS Code's default `http.proxySupport: "override"` monkey-patches
+// `http(s).request`/`.get` to discard any caller-supplied agent and force every request through the
+// OS/PAC-resolved proxy (microsoft/vscode#173861). When that system proxy is unreachable the console
+// call dies with "Failed to establish a socket connection to proxies" — even though a direct
+// connection works (and does, in forks like Cursor that don't force the system proxy). The
+// `ClientRequest` constructor is not patched, so this keeps our system-CA agent and connects directly,
+// exactly as intended. TLS/cert handling (via our agent) is unaffected.
 import * as http from "node:http";
-import * as https from "node:https";
 import * as zlib from "node:zlib";
 import { ApiError } from "../api/errors";
 import { createUpstreamAgent } from "../jupyter/upstreamAgent";
@@ -31,9 +39,8 @@ export const consoleFetch: HttpFetch = (url, init) => {
   const { promise, resolve, reject } = Promise.withResolvers<HttpResponse>();
   const target = new URL(url);
   const isHttps = target.protocol === "https:";
-  const transport = isHttps ? https : http;
   const timeoutMs = init.timeoutMs ?? DEFAULT_HTTP_TIMEOUT_MS;
-  const req = transport.request(
+  const req = new http.ClientRequest(
     {
       protocol: target.protocol,
       hostname: target.hostname,

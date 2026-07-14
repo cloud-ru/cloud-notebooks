@@ -29,9 +29,6 @@
   "activationEvents": [
     "onView:cloudruNotebooks"
   ],
-  "extensionDependencies": [
-    "ms-toolsai.jupyter"
-  ],
   "main": "./dist/extension.js",
   "contributes": {
     "viewsContainers": {
