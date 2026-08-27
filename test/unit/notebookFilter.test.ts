@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   describeFilter,
   distinctAuthors,
-  distinctStatuses,
   filterNotebooks,
   isFilterActive,
 } from "../../src/views/notebookFilter";
@@ -75,13 +74,6 @@ describe("filterNotebooks", () => {
 describe("distinctAuthors", () => {
   it("returns sorted unique authors", () => {
     expect(distinctAuthors(list)).toEqual(["alice@x", "bob@x"]);
-  });
-});
-
-describe("distinctStatuses", () => {
-  it("returns sorted unique statuses", () => {
-    const mixed = [nb({ status: "running" }), nb({ status: "paused" }), nb({ status: "running" })];
-    expect(distinctStatuses(mixed)).toEqual(["paused", "running"]);
   });
 });
 

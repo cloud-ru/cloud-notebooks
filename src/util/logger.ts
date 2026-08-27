@@ -4,7 +4,7 @@ import * as vscode from "vscode";
 export class Logger {
   private readonly channel: vscode.OutputChannel;
 
-  constructor(name = "Cloud.ru ML Space") {
+  constructor(name = "Cloud.ru Distributed Train") {
     this.channel = vscode.window.createOutputChannel(name);
   }
 

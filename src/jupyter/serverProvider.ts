@@ -31,7 +31,7 @@ export class CloudruServerProvider implements JupyterServerProvider {
   readonly onDidChangeServers = this.didChange.event;
   private readonly notebooks = new Map<string, NotebookHandlerResponse>();
   // Each forward remembers the notebook URL it was built for; a pause→resume changes the URL (or drops
-  // the notebook), so a stale forward is disposed rather than handed back to a dead pod (H9).
+  // the notebook), so a stale forward is disposed rather than handed back to a dead pod.
   private readonly forwards = new Map<string, { connection: SshConnection; baseUrl: string; url: string }>();
 
   constructor(private readonly deps: CloudruServerProviderDeps) {}
@@ -92,7 +92,7 @@ export class CloudruServerProvider implements JupyterServerProvider {
       throw new Error("Notebook is no longer available — refresh the Cloud.ru notebooks list.");
     }
 
-    // The kernel picker must never open dialogs (H11) — resolve non-interactively and fail clearly.
+    // The kernel picker must never open dialogs — resolve non-interactively and fail clearly.
     const target = await this.deps.config.resolveTarget(notebook, { interactive: false });
     if (!target) throw new Error("SSH не настроен. Выполните команду «Cloud.ru: Настроить SSH».");
 

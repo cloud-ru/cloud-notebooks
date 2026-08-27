@@ -25,6 +25,15 @@ export type NotebookStatus =
   // Synthetic: a status the console returned that we do not recognize (normalizeStatus fallback).
   | "unknown";
 
+/** A bucket mounted into the notebook, from the console DTO's `s3_buckets`. */
+export interface NotebookBucket {
+  name: string;
+  /** Raw console `mount_status`: "NOT_MOUNTED" | "MOUNTED" | "NOT_MOUNT_ERROR" | "MOUNT_ERROR". */
+  mountStatus: string;
+  /** Raw console `access_rule` (e.g. "ro" / "rw"). */
+  accessRule?: string;
+}
+
 /** Normalized notebook list item used by the tree, SSH, and kernel features. */
 export interface NotebookHandlerResponse {
   uid: string;
@@ -56,6 +65,15 @@ export interface NotebookHandlerResponse {
   accessMode?: string | null;
   /** Enabled auto-shutdown modes, as RU labels (e.g. "по времени"). Empty = auto-shutdown off. */
   autoshutdownModes?: string[];
+  /**
+   * Raw `autoshutdown_config` DTO as returned by the console (by_timer/by_schedule/by_load), echoed
+   * back verbatim by the modify endpoint. Undefined when the notebook has no such config.
+   */
+  autoshutdownConfig?: unknown;
+  /** Buckets mounted into the notebook; undefined when the console returned no list at all. */
+  s3Buckets?: NotebookBucket[];
+  /** When present, the pod hit a node problem and will be restarted automatically at this time. */
+  restartTimestamp?: string | null;
 }
 
 /** The active workspace selection (`x-workspace-id`). */
@@ -80,7 +98,7 @@ export interface ProjectStatus {
   rejection?: string;
 }
 
-/** ML Space SSH key pair (GET/POST /user/v1/user_ssh_keys/*). */
+/** Distributed Train SSH key pair (GET/POST /user/v1/user_ssh_keys/*). */
 export interface SshKeyPair {
   public_key: string;
   private_key: string;

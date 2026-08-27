@@ -1,11 +1,10 @@
 {
   "name": "cloudru-jupyter-vscode",
-  "displayName": "Cloud.ru ML Space Notebooks",
-  "description": "Sign in to Cloud.ru, browse Jupyter Server notebooks created in the ML Space console, and open them.",
-  "version": "0.0.1",
+  "displayName": "Cloud.ru Distributed Train Notebooks",
+  "description": "Sign in to Cloud.ru, browse Jupyter Server notebooks created in the Distributed Train console, and open them.",
+  "version": "0.1.0",
   "publisher": "cloudru",
   "license": "Apache-2.0",
-  "private": true,
   "packageManager": "pnpm@10.22.0",
   "engines": {
     "vscode": "^1.90.0"
@@ -17,7 +16,7 @@
   ],
   "keywords": [
     "cloud.ru",
-    "mlspace",
+    "distributed train",
     "jupyter",
     "notebook",
     "remote"
@@ -26,16 +25,23 @@
     "type": "git",
     "url": "https://github.com/cloud-ru/cloudru-jupyter-vscode"
   },
+  "homepage": "https://github.com/cloud-ru/cloudru-jupyter-vscode#readme",
+  "bugs": {
+    "url": "https://github.com/cloud-ru/cloudru-jupyter-vscode/issues"
+  },
   "activationEvents": [
     "onView:cloudruNotebooks"
   ],
   "main": "./dist/extension.js",
+  "extensionKind": [
+    "ui"
+  ],
   "contributes": {
     "viewsContainers": {
       "activitybar": [
         {
           "id": "cloudru",
-          "title": "Cloud.ru ML Space",
+          "title": "Cloud.ru Distributed Train",
           "icon": "media/activity-icon.svg"
         }
       ]
@@ -46,14 +52,14 @@
           "id": "cloudruNotebooks",
           "name": "Notebooks",
           "icon": "media/activity-icon.svg",
-          "contextualTitle": "Cloud.ru ML Space"
+          "contextualTitle": "Cloud.ru Distributed Train"
         }
       ]
     },
     "viewsWelcome": [
       {
         "view": "cloudruNotebooks",
-        "contents": "Войдите в Cloud.ru, чтобы увидеть Jupyter Server из консоли ML Space.\n[Войти в Cloud.ru](command:cloudru.signIn)",
+        "contents": "Войдите в Cloud.ru, чтобы увидеть Jupyter Server из консоли Distributed Train.\n[Войти в Cloud.ru](command:cloudru.signIn)",
         "when": "!cloudru.authenticated && !cloudru.sessionExpired"
       },
       {
@@ -98,8 +104,15 @@
         "title": "Получить SSH-ключ (сгенерировать новый)",
         "category": "Cloud.ru"
       },
+      {
+        "command": "cloudru.uploadSshKey",
+        "title": "Загрузить свой публичный SSH-ключ…",
+        "category": "Cloud.ru"
+      },
       { "command": "cloudru.openNotebookInBrowser", "title": "Открыть в браузере", "category": "Cloud.ru" },
       { "command": "cloudru.showLogs", "title": "Показать логи", "category": "Cloud.ru" },
+      { "command": "cloudru.downloadLogs", "title": "Скачать логи…", "category": "Cloud.ru" },
+      { "command": "cloudru.editDescription", "title": "Изменить описание…", "category": "Cloud.ru" },
       { "command": "cloudru.deleteNotebook", "title": "Удалить…", "category": "Cloud.ru" },
       { "command": "cloudru.openMonitoring", "title": "Открыть мониторинг в консоли", "category": "Cloud.ru" },
       {
@@ -108,6 +121,7 @@
         "category": "Cloud.ru"
       },
       { "command": "cloudru.notebookActions", "title": "Действия с ноутбуком…", "category": "Cloud.ru" },
+      { "command": "cloudru.statusBarMenu", "title": "Меню строки состояния", "category": "Cloud.ru" },
       { "command": "cloudru.searchNotebooks", "title": "Поиск по имени…", "category": "Cloud.ru" },
       { "command": "cloudru.filterByAuthor", "title": "Фильтр по автору…", "category": "Cloud.ru" },
       { "command": "cloudru.filterByStatus", "title": "Фильтр по статусу…", "category": "Cloud.ru" },
@@ -153,9 +167,14 @@
           "group": "overflow@4"
         },
         {
-          "command": "cloudru.signOut",
+          "command": "cloudru.uploadSshKey",
           "when": "view == cloudruNotebooks && cloudru.authenticated",
           "group": "overflow@5"
+        },
+        {
+          "command": "cloudru.signOut",
+          "when": "view == cloudruNotebooks && cloudru.authenticated",
+          "group": "overflow@6"
         }
       ],
       "cloudru.filterMenu": [
@@ -218,9 +237,19 @@
           "group": "4_diag@1"
         },
         {
+          "command": "cloudru.downloadLogs",
+          "when": "view == cloudruNotebooks && (viewItem =~ /^notebook\\.running/ || viewItem =~ /^notebook\\.other/)",
+          "group": "4_diag@2"
+        },
+        {
           "command": "cloudru.openMonitoring",
           "when": "view == cloudruNotebooks && (viewItem =~ /^notebook\\.running/ || viewItem =~ /^notebook\\.paused/)",
-          "group": "4_diag@2"
+          "group": "4_diag@3"
+        },
+        {
+          "command": "cloudru.editDescription",
+          "when": "view == cloudruNotebooks && (viewItem =~ /^notebook\\.running/ || viewItem =~ /^notebook\\.paused/ || viewItem =~ /^notebook\\.other/)",
+          "group": "6_meta@1"
         },
         {
           "command": "cloudru.addFavorite",
@@ -232,10 +261,16 @@
           "when": "view == cloudruNotebooks && viewItem =~ /\\.fav$/",
           "group": "5_favorites@1"
         }
+      ],
+      "commandPalette": [
+        {
+          "command": "cloudru.statusBarMenu",
+          "when": "false"
+        }
       ]
     },
     "configuration": {
-      "title": "Cloud.ru ML Space",
+      "title": "Cloud.ru Distributed Train",
       "properties": {
         "cloudru.console.apiBaseUrl": {
           "type": "string",
@@ -255,7 +290,7 @@
         "cloudru.ssh.privateKeyPath": {
           "type": "string",
           "default": "",
-          "description": "Path to the ML Space SSH private key (downloaded from the console SSH dialog). Used to browse notebook files over SFTP."
+          "description": "Path to the Distributed Train SSH private key (downloaded from the console SSH dialog). Used to browse notebook files over SFTP."
         },
         "cloudru.ssh.host": {
           "type": "string",

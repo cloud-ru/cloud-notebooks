@@ -3,7 +3,7 @@ import type { WorkspaceContext } from "../api/types";
 
 /**
  * Status-bar item showing the current Cloud.ru workspace (or the signed-out state). Clicking it opens
- * a QuickPick to switch workspace, refresh, or sign out (improvement-plan 4.4).
+ * a QuickPick to switch workspace, refresh, or sign out.
  */
 export class CloudruStatusBar {
   private readonly item: vscode.StatusBarItem;
@@ -16,7 +16,7 @@ export class CloudruStatusBar {
   ) {
     this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
     this.item.command = "cloudru.statusBarMenu";
-    this.item.tooltip = "Cloud.ru ML Space";
+    this.item.tooltip = "Cloud.ru Distributed Train";
     this.item.show();
   }
 

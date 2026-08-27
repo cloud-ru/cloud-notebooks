@@ -3,7 +3,7 @@ import * as http from "node:http";
 /**
  * Quick liveness probe for a local URL reached over the SSH tunnel. Used to detect a dead tunnel/shim
  * (e.g. after a pause→resume recreated the pod) before reusing a cached forward or shim, so the kernel
- * picker / webview reconnect instead of hanging forever on a stale port (H9/H10).
+ * picker / webview reconnect instead of hanging forever on a stale port.
  *
  * `acceptAny` treats *any* HTTP response as alive (the tunnel forwarded a byte) — right for the raw
  * pod tunnel. Without it, only 2xx/3xx count as alive — right for the shim, whose 502 means the

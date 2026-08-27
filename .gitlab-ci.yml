@@ -1,11 +1,11 @@
-# CI/CD for the Cloud.ru ML Space Notebooks VS Code extension.
+# CI/CD for the Cloud.ru Distributed Train Notebooks VS Code extension.
 #
 #   build   -> typecheck + esbuild bundle  (verify the app compiles/bundles)
 #   test    -> vitest unit suite
 #   package -> build the .vsix for import into VS Code (Extensions -> Install from VSIX)
 #
-# The .vsix is exposed as a job artifact on every pipeline for QA / internal
-# distribution, and retained long-term on Git tags (releases).
+# The .vsix is exposed as a job artifact on every pipeline for installation/testing,
+# and retained long-term on Git tags (releases).
 
 stages:
   - build

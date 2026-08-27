@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { autoshutdownModes, mapConsoleNotebook, normalizeStatus } from "../../src/console/notebookMapping";
+import {
+  autoshutdownModes,
+  hasBucketMountProblem,
+  mapConsoleNotebook,
+  normalizeStatus,
+} from "../../src/console/notebookMapping";
 
 describe("mapConsoleNotebook", () => {
   it("maps console fields to the view model", () => {
@@ -104,7 +109,7 @@ describe("mapConsoleNotebook status fallback", () => {
   });
 });
 
-describe("mapConsoleNotebook field mapping (3.7)", () => {
+describe("mapConsoleNotebook field mapping", () => {
   it("renames access_mode/access_granted/autoshutdown_config and carries pause_at", () => {
     const out = mapConsoleNotebook({
       uid: "u",
@@ -120,6 +125,55 @@ describe("mapConsoleNotebook field mapping (3.7)", () => {
     expect(out.accessGranted).toBe(false);
     expect(out.pause_at).toBe("2026-01-02T03:04:05Z");
     expect(out.autoshutdownModes).toEqual(["по времени"]);
+  });
+
+  it("keeps the raw autoshutdown_config for the modify echo", () => {
+    const config = { by_timer: { shutdown_in: 120, is_enabled: true } };
+    expect(mapConsoleNotebook({ uid: "u", name: "n", status: "running", region: "r", autoshutdown_config: config }).autoshutdownConfig).toEqual(config);
+    expect(mapConsoleNotebook({ uid: "u", name: "n", status: "running", region: "r" }).autoshutdownConfig).toBeUndefined();
+  });
+
+  it("maps s3_buckets and leaves them undefined when the console returns no list", () => {
+    const withBuckets = mapConsoleNotebook({
+      uid: "u",
+      name: "n",
+      status: "running",
+      region: "r",
+      s3_buckets: [
+        { bucket_name: "data", mount_status: "MOUNTED", access_rule: "rw" },
+        { bucket_name: "broken", mount_status: "MOUNT_ERROR" },
+      ],
+    });
+    expect(withBuckets.s3Buckets).toEqual([
+      { name: "data", mountStatus: "MOUNTED", accessRule: "rw" },
+      { name: "broken", mountStatus: "MOUNT_ERROR" },
+    ]);
+    expect(hasBucketMountProblem(withBuckets)).toBe(true);
+
+    const mountedOnly = mapConsoleNotebook({
+      uid: "u",
+      name: "n",
+      status: "running",
+      region: "r",
+      s3_buckets: [{ bucket_name: "data", mount_status: "MOUNTED" }],
+    });
+    expect(hasBucketMountProblem(mountedOnly)).toBe(false);
+
+    const withoutField = mapConsoleNotebook({ uid: "u", name: "n", status: "running", region: "r" });
+    expect(withoutField.s3Buckets).toBeUndefined();
+    expect(hasBucketMountProblem(withoutField)).toBe(false);
+  });
+
+  it("carries restart_timestamp through", () => {
+    const out = mapConsoleNotebook({
+      uid: "u",
+      name: "n",
+      status: "warning",
+      region: "r",
+      restart_timestamp: "2026-08-27T18:00:00Z",
+    });
+    expect(out.restartTimestamp).toBe("2026-08-27T18:00:00Z");
+    expect(mapConsoleNotebook({ uid: "u", name: "n", status: "running", region: "r" }).restartTimestamp).toBeNull();
   });
 
   it.each<[string, boolean | undefined, boolean]>([

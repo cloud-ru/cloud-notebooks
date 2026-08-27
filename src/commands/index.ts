@@ -1,8 +1,11 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
 import * as vscode from "vscode";
 import { ApiError } from "../api/errors";
 import type { NotebookHandlerResponse, WorkspaceContext } from "../api/types";
 import type { ConsoleApiClient, ConsoleWorkspace } from "../console/apiClient";
 import { ConsoleTokenProvider, NotSignedInError } from "../console/tokenProvider";
+import { isoDaysAgo } from "../console/logsFile";
 import { buildResumeBody, splitImageRef, type ResumeBody } from "../console/resumeBody";
 import { pollNotebookStatus, type PollOutcome } from "../console/pollLoop";
 import type { SessionStore } from "../session/sessionStore";
@@ -12,6 +15,9 @@ import { buildNotebookActions } from "../views/notebookActions";
 import type { NotebookViewController } from "../jupyter/notebookController";
 import type { CloudruServerProvider } from "../jupyter/serverProvider";
 import type { SshController } from "../ssh/sshController";
+
+/** Description length cap enforced by the console's edit form. */
+const MAX_DESCRIPTION_LENGTH = 64;
 
 export interface CommandDeps {
   auth: ConsoleTokenProvider;
@@ -76,7 +82,7 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
       const CHANGE = "Сменить воркспейс…";
       const REFRESH = "Обновить список";
       const OUT = "Выйти";
-      const picked = await vscode.window.showQuickPick([CHANGE, REFRESH, OUT], { title: "Cloud.ru ML Space" });
+      const picked = await vscode.window.showQuickPick([CHANGE, REFRESH, OUT], { title: "Cloud.ru Distributed Train" });
       if (picked === CHANGE) await vscode.commands.executeCommand("cloudru.selectWorkspace");
       else if (picked === REFRESH) await vscode.commands.executeCommand("cloudru.refreshNotebooks");
       else if (picked === OUT) await vscode.commands.executeCommand("cloudru.signOut");
@@ -264,6 +270,20 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
       await showNotebookLogs(client, ws, item.notebook);
     }),
 
+    run("cloudru.downloadLogs", async (...args: unknown[]) => {
+      const item = args[0] as NotebookTreeItem | undefined;
+      const ws = session.get();
+      if (!item || !ws) return;
+      await downloadNotebookLogs(client, ws, item.notebook);
+    }),
+
+    run("cloudru.editDescription", async (...args: unknown[]) => {
+      const item = args[0] as NotebookTreeItem | undefined;
+      const ws = session.get();
+      if (!item || !ws) return;
+      await editNotebookDescription(client, ws, item.notebook, () => tree.refresh());
+    }),
+
     run("cloudru.deleteNotebook", async (...args: unknown[]) => {
       const item = args[0] as NotebookTreeItem | undefined;
       const ws = session.get();
@@ -295,6 +315,10 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
       );
       if (choice !== CONFIRM) return;
       await ssh.generateKey();
+    }),
+
+    run("cloudru.uploadSshKey", async () => {
+      await ssh.uploadOwnPublicKey();
     }),
 
     run("cloudru.openMonitoring", async () => {
@@ -403,13 +427,8 @@ async function showNotebookLogs(
   ws: WorkspaceContext,
   notebook: NotebookHandlerResponse,
 ): Promise<void> {
-  const namespace = ws.namespace ?? notebook.namespace;
-  if (!namespace) {
-    void vscode.window.showErrorMessage(
-      `Не удалось получить логи «${notebook.name}»: неизвестен namespace воркспейса.`,
-    );
-    return;
-  }
+  const namespace = requireNamespace(notebook, ws);
+  if (!namespace) return;
   const logs = await vscode.window.withProgress(
     { location: vscode.ProgressLocation.Notification, title: `Загрузка логов «${notebook.name}»…` },
     () => client.getNotebookLogs(ws, namespace, notebook.name, notebook.region),
@@ -422,6 +441,110 @@ async function showNotebookLogs(
     language: "log",
   });
   await vscode.window.showTextDocument(doc, { preview: false });
+}
+
+/**
+ * Download the notebook logs archive for a quick time range and save it next to where the user
+ * points. Mirrors the web console's "Скачать логи" submenu (1/3/7 days).
+ */
+async function downloadNotebookLogs(
+  client: ConsoleApiClient,
+  ws: WorkspaceContext,
+  notebook: NotebookHandlerResponse,
+): Promise<void> {
+  const namespace = requireNamespace(notebook, ws);
+  if (!namespace) return;
+
+  const DAY = "последние сутки";
+  const DAYS3 = "последние 3 дня";
+  const DAYS7 = "последние 7 дней";
+  const choice = await vscode.window.showQuickPick([DAY, DAYS3, DAYS7], {
+    title: `Скачать логи «${notebook.name}»`,
+    ignoreFocusOut: true,
+  });
+  if (!choice) return;
+  const days = choice === DAY ? 1 : choice === DAYS3 ? 3 : 7;
+
+  const destination = await vscode.window.showSaveDialog({
+    saveLabel: "Сохранить логи",
+    defaultUri: vscode.Uri.file(`${notebook.name}.txt`),
+  });
+  if (!destination) return;
+
+  try {
+    const { fileName, content } = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: `Формируется архив логов «${notebook.name}»…` },
+      () =>
+        client.downloadNotebookLogs(ws, {
+          namespace,
+          notebookName: notebook.name,
+          region: notebook.region,
+          startDate: isoDaysAgo(days),
+        }),
+    );
+    // Prefer a user-chosen name, but keep the server-side extension when the picked name has none.
+    const target = hasExtension(destination) ? destination : destination.with({ path: `${destination.path}.${extOf(fileName)}` });
+    await fs.promises.writeFile(target.fsPath, content, "utf8");
+    void vscode.window.showInformationMessage(`Логи «${notebook.name}» сохранены: ${target.path.split("/").pop()}`);
+  } catch (err) {
+    void vscode.window.showErrorMessage(`Не удалось скачать логи «${notebook.name}»: ${errorMessage(err)}`);
+  }
+}
+
+/** Namespace for the notebook-scoped endpoints; falls back to the per-notebook value and toasts. */
+function requireNamespace(notebook: NotebookHandlerResponse, ws: WorkspaceContext): string | undefined {
+  const namespace = ws.namespace ?? notebook.namespace;
+  if (!namespace) {
+    void vscode.window.showErrorMessage(
+      `Операция с «${notebook.name}»: неизвестен namespace воркспейса. Выполните «Cloud.ru: Выбрать воркспейс» и повторите.`,
+    );
+  }
+  return namespace;
+}
+
+/** The modify endpoint replaces the editable fields wholesale, so unchanged values are echoed back. */
+async function editNotebookDescription(
+  client: ConsoleApiClient,
+  ws: WorkspaceContext,
+  notebook: NotebookHandlerResponse,
+  refresh: () => void,
+): Promise<void> {
+  const description = await vscode.window.showInputBox({
+    title: `Описание «${notebook.name}»`,
+    prompt: "До 64 символов; видно в списке расширения и в консоли Cloud.ru.",
+    value: notebook.description ?? "",
+    ignoreFocusOut: true,
+    validateInput: (v) =>
+      v.length > MAX_DESCRIPTION_LENGTH ? `Максимум ${MAX_DESCRIPTION_LENGTH} символов` : undefined,
+  });
+  if (description === undefined) return;
+  await client.modifyNotebook(ws, notebook.uid, {
+    description,
+    ...(notebook.s3Buckets
+      ? {
+          s3_buckets: notebook.s3Buckets.map((b) => ({
+            bucket_name: b.name,
+            ...(b.accessRule !== undefined ? { access_rule: b.accessRule } : {}),
+          })),
+        }
+      : {}),
+    autoshutdown_config: notebook.autoshutdownConfig ?? null,
+  });
+  refresh();
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function hasExtension(uri: vscode.Uri): boolean {
+  return path.extname(uri.path).length > 0;
+}
+
+/** File extension from a file name, without the dot ("logs.txt" → "txt"). */
+function extOf(fileName: string): string {
+  const ext = path.extname(fileName);
+  return ext.startsWith(".") ? ext.slice(1) : "txt";
 }
 
 /** Project preflight; treats any failure as active so a flaky preflight never blocks the user. */
@@ -502,7 +625,7 @@ async function withErrorHandling(
     if (err instanceof ApiError) {
       logger.error("Command failed", err);
       if (err.isAuth) {
-        await auth.handleExpiredSession(); // single expiry path: one "Войти" toast (H7)
+        await auth.handleExpiredSession(); // single expiry path: one "Войти" toast
         return;
       }
       if (err.kind === "network") {

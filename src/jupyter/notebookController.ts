@@ -54,7 +54,7 @@ export class NotebookViewController {
     const existing = this.shims.get(notebook.uid);
     if (existing) {
       // Reuse only if the shim still reaches a live pod; a pause→resume leaves it wired to a dead
-      // tunnel, which otherwise renders as a webview that spins forever (H10).
+      // tunnel, which otherwise renders as a webview that spins forever.
       if (await probeHttpAlive(`${existing.shim.baseUrl}${existing.appPath}`)) return existing;
       this.deps.logger.info(`Notebook shim for ${notebook.name} is stale; rebuilding.`);
       this.invalidate(notebook.uid);

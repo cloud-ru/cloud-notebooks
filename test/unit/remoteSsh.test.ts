@@ -5,7 +5,7 @@ const entry = {
   host: "ssh-jupyter.ai.cloud.ru",
   port: 2222,
   username: "nb.ai0000000-00000",
-  identityFile: "/keys/mlspace key (1).txt",
+  identityFile: "/keys/distributed train key (1).txt",
 };
 
 describe("formatHostStanza", () => {
@@ -13,7 +13,7 @@ describe("formatHostStanza", () => {
     const stanza = formatHostStanza("cloudru-x", entry, "/g/known_hosts");
     expect(stanza).toContain("Host cloudru-x");
     expect(stanza).toContain("HostName ssh-jupyter.ai.cloud.ru");
-    expect(stanza).toContain('IdentityFile "/keys/mlspace key (1).txt"');
+    expect(stanza).toContain('IdentityFile "/keys/distributed train key (1).txt"');
     expect(stanza).toContain("HostKeyAlgorithms +ssh-rsa");
     expect(stanza).toContain("StrictHostKeyChecking accept-new");
     expect(stanza).toContain('UserKnownHostsFile "/g/known_hosts"');

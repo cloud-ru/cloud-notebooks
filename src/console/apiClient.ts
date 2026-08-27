@@ -5,10 +5,23 @@
 import { ApiError, apiErrorFromResponse } from "../api/errors";
 import type { NotebookHandlerResponse, NotebookLogs, ProjectStatus, SshKeyPair, WorkspaceContext } from "../api/types";
 import { consoleFetch, type HttpFetch, type HttpResponse } from "./consoleHttp";
+import { parseDownloadFileName as dispositionFileName } from "./logsFile";
 import { type ConsoleNotebooksResponse, mapConsoleNotebook } from "./notebookMapping";
 import type { ResolvedHarborImage } from "./resumeBody";
 
 const NAMESPACE_HEADER = "cp-front-mlspace-env-jupyter-server";
+
+/**
+ * Editable fields of a notebook (POST /notebooks/v2/{uid}/modify). The backend treats the payload as
+ * the full replacement for these fields, so callers echo back current values they keep unchanged
+ * (same contract as the web console's modify mutation).
+ */
+export interface ModifyNotebookPayload {
+  description?: string;
+  s3_buckets?: { bucket_name: string; access_rule?: string }[];
+  /** Raw autoshutdown config DTO (by_timer/by_schedule/by_load); null disables it entirely. */
+  autoshutdown_config?: unknown;
+}
 
 /** Workspace list item from GET /user/v1/workspaces/ — the console "switcher" list (flat, all of the
  * user's workspaces). `workspace_id` becomes the x-workspace-id header. */
@@ -53,7 +66,7 @@ export class ConsoleApiClient {
   private readonly logger: { info(message: string): void; warn?(message: string): void } | undefined;
   private readonly timeoutMs: number | undefined;
   /** In-flight listNotebooks calls keyed by workspaceId, so the tree, kernel provider and poller share
-   * one request instead of racing three concurrent silent mints (H8/1.6). */
+   * one request instead of racing three concurrent silent mints. */
   private readonly inFlightList = new Map<string, Promise<NotebookHandlerResponse[]>>();
 
   constructor(opts: ConsoleApiClientOptions) {
@@ -104,7 +117,7 @@ export class ConsoleApiClient {
 
   /**
    * Look up a datahub/default Jupyter image by name+tag to recover its labels for the resume body.
-   * Mirrors the web app's docker_images lookup (A1.1/2.4). Returns undefined when nothing matches;
+   * Mirrors the web app's docker_images lookup. Returns undefined when nothing matches;
    * callers treat any failure as "no match" and fall back to empty labels — never blocking resume.
    */
   async findResumeImage(
@@ -157,6 +170,57 @@ export class ConsoleApiClient {
     await this.send<unknown>("DELETE", `${this.baseUrl}/notebooks/v4/${uid}`, { workspaceId: ws.workspaceId });
   }
 
+  /**
+   * Edit an existing notebook (POST /notebooks/v2/{uid}/modify). The backend replaces the editable
+   * fields wholesale, so callers must echo back the current values they do not intend to change —
+   * that is why the payload carries description, s3_buckets and autoshutdown_config together.
+   */
+  async modifyNotebook(ws: WorkspaceContext, uid: string, body: ModifyNotebookPayload): Promise<void> {
+    await this.send<unknown>("POST", `${this.baseUrl}/notebooks/v2/${encodeURIComponent(uid)}/modify`, {
+      workspaceId: ws.workspaceId,
+      body,
+    });
+  }
+
+  /** Upload the user's own public SSH key (invalidates any previously provisioned key). */
+  async uploadUserPublicKey(ws: WorkspaceContext, publicKey: string): Promise<void> {
+    await this.send<unknown>("POST", `${this.baseUrl}/user/v1/user_ssh_keys/public_key`, {
+      workspaceId: ws.workspaceId,
+      body: { public_key: publicKey.trim() },
+    });
+  }
+
+  /**
+   * Download notebook logs as text. `startDate`/`stopDate` are ISO strings; pass undefined to get
+   * everything available. The raw text is returned together with the file name suggested by the
+   * server (Content-Disposition), falling back to `<notebookName>.txt`.
+   */
+  async downloadNotebookLogs(
+    ws: WorkspaceContext,
+    params: { namespace: string; notebookName: string; region: string; startDate?: string; stopDate?: string },
+  ): Promise<{ fileName: string; content: string }> {
+    const query = new URLSearchParams({ region: params.region });
+    if (params.startDate !== undefined) query.set("start_date", params.startDate);
+    if (params.stopDate !== undefined) query.set("stop_date", params.stopDate);
+    query.set("asc", "true");
+    const url =
+      `${this.baseUrl}/notebooks/v2/${encodeURIComponent(params.namespace)}` +
+      `/${encodeURIComponent(params.notebookName)}/logs/download?${query.toString()}`;
+    // One-off request bypassing send(): this endpoint answers with a text attachment, not JSON.
+    // Same auth policy as send(): one forced re-mint + retry after a 401.
+    let response = await this.dispatch("GET", url, { workspaceId: ws.workspaceId }, false);
+    if (response.status === 401) {
+      response = await this.dispatch("GET", url, { workspaceId: ws.workspaceId }, true);
+    }
+    if (!response.ok) {
+      throw apiErrorFromResponse(response.status, await response.text(), response.headers.get("retry-after"));
+    }
+    return {
+      fileName: dispositionFileName(response.headers.get("content-disposition"), params.notebookName),
+      content: await response.text(),
+    };
+  }
+
   /** Notebook logs + current status/reason. `namespace` is the workspace namespace (as for resume). */
   async getNotebookLogs(
     ws: WorkspaceContext,
@@ -186,7 +250,7 @@ export class ConsoleApiClient {
     return { access: res.access ?? true, ...(res.rejection ? { rejection: res.rejection } : {}) };
   }
 
-  /** The user's existing ML Space SSH key pair, or undefined if none is provisioned. */
+  /** The user's existing Distributed Train SSH key pair, or undefined if none is provisioned. */
   async getSshKey(ws: WorkspaceContext): Promise<SshKeyPair | undefined> {
     const res = await this.send<Partial<SshKeyPair>>("GET", `${this.baseUrl}/user/v1/user_ssh_keys/`, {
       workspaceId: ws.workspaceId,

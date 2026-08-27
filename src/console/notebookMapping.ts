@@ -1,6 +1,6 @@
 // Maps the console UI API notebook DTO to our view model. Pure (no `vscode`) → unit-testable.
 // Field shape mirrors env-jupyter-server's `NotebookResponse` (console.cloud.ru/aicloud/ui).
-import type { NotebookHandlerResponse, NotebookStatus } from "../api/types";
+import type { NotebookBucket, NotebookHandlerResponse, NotebookStatus } from "../api/types";
 
 export interface ConsoleNotebook {
   uid: string;
@@ -26,6 +26,8 @@ export interface ConsoleNotebook {
   access_mode?: string;
   pause_at?: string | null;
   autoshutdown_config?: unknown;
+  restart_timestamp?: string | null;
+  s3_buckets?: { bucket_name?: string; mount_status?: string; access_rule?: string }[];
 }
 
 export interface ConsoleNotebooksResponse {
@@ -96,6 +98,7 @@ export function mapConsoleNotebook(
 ): NotebookHandlerResponse {
   const status = normalizeStatus(n.status);
   if (status === "unknown" && n.status) onUnknownStatus?.(n.status);
+  const buckets = mapBuckets(n.s3_buckets);
   return {
     uid: n.uid,
     name: n.name,
@@ -118,6 +121,28 @@ export function mapConsoleNotebook(
     allocationQueueName: n.queue_name ?? null,
     accessMode: n.access_mode ?? null,
     autoshutdownModes: autoshutdownModes(n.autoshutdown_config),
+    autoshutdownConfig: n.autoshutdown_config,
+    ...(buckets !== undefined ? { s3Buckets: buckets } : {}),
+    restartTimestamp: n.restart_timestamp ?? null,
     pause_at: n.pause_at ?? null,
   };
+}
+
+/** Mount statuses that mean the bucket is unusable (the console shows an alarm for these). */
+const BUCKET_ALARM_STATUSES = new Set(["NOT_MOUNTED", "NOT_MOUNT_ERROR", "MOUNT_ERROR"]);
+
+/** Normalize `s3_buckets` to our model; undefined when the console returned no list at all. */
+function mapBuckets(buckets: ConsoleNotebook["s3_buckets"]): NotebookBucket[] | undefined {
+  if (!Array.isArray(buckets)) return undefined;
+  return buckets.map((b) => ({
+    name: b.bucket_name ?? "",
+    mountStatus: b.mount_status ?? "",
+    ...(b.access_rule !== undefined ? { accessRule: b.access_rule } : {}),
+  }));
+}
+
+/** True when any mounted bucket is in an alarm mount status (mirrors the console's warning icon). */
+export function hasBucketMountProblem(nb: NotebookHandlerResponse): boolean {
+  if (!nb.s3Buckets) return false;
+  return nb.s3Buckets.some((b) => BUCKET_ALARM_STATUSES.has(b.mountStatus.toUpperCase()));
 }

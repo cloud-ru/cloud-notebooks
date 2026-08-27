@@ -6,6 +6,7 @@ import type { NotebookHandlerResponse, NotebookStatus } from "../api/types";
 import type { SessionStore } from "../session/sessionStore";
 import type { Logger } from "../util/logger";
 import { notebookContextValue, presentNotebookStatus, statusLabel } from "../util/notebookStatus";
+import { hasBucketMountProblem } from "../console/notebookMapping";
 import type { FavoritesStore } from "./favoritesStore";
 import {
   describeFilter,
@@ -67,7 +68,7 @@ export class NotebooksTreeProvider implements vscode.TreeDataProvider<NotebookTr
   /** Whether `lastNotebooks` holds a real fetch result yet (vs the empty initial value). */
   private loaded = false;
   /** When true, the next getChildren hits the network; applyNotebooks/poll data clears it so we serve
-   * the fresh list without a duplicate fetch (H8/1.4). */
+   * the fresh list without a duplicate fetch. */
   private refetchNeeded = true;
 
   constructor(private readonly deps: NotebooksTreeDeps) {}
@@ -224,7 +225,7 @@ export class NotebooksTreeProvider implements vscode.TreeDataProvider<NotebookTr
 const ACCESS_MODE_LABELS: Record<string, string> = {
   private: "индивидуальный",
   shared: "совместный",
-  multiuser: "мультидоступ",
+  multiuser: "многопользовательский",
 };
 
 function buildTooltip(nb: NotebookHandlerResponse, favorite: boolean): vscode.MarkdownString {
@@ -244,6 +245,13 @@ function buildTooltip(nb: NotebookHandlerResponse, favorite: boolean): vscode.Ma
     md.appendMarkdown(`- Автовыключение: ${nb.autoshutdownModes.join(", ")}\n`);
   }
   if (nb.pause_at) md.appendMarkdown(`- Пауза запланирована: ${nb.pause_at}\n`);
+  // The pod hit a node problem and will be restarted automatically (mirrors the console alert).
+  if (nb.restartTimestamp) {
+    md.appendMarkdown(`\n⚠️ Неполадка узла: сервер будет перезапущен ${new Date(nb.restartTimestamp).toLocaleString()}.\n`);
+  }
+  if (hasBucketMountProblem(nb)) {
+    md.appendMarkdown("\n⚠️ Бакет не смонтирован — нет доступа или бакет не существует.\n");
+  }
   if (nb.description) md.appendMarkdown(`\n${nb.description}`);
   return md;
 }

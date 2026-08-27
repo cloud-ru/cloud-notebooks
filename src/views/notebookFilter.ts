@@ -46,11 +46,6 @@ export function distinctAuthors(notebooks: NotebookHandlerResponse[]): string[] 
   return [...new Set(notebooks.map((nb) => nb.author))].filter(Boolean).sort();
 }
 
-/** Distinct statuses present in the list, sorted, for the status-filter picker. */
-export function distinctStatuses(notebooks: NotebookHandlerResponse[]): string[] {
-  return [...new Set(notebooks.map((nb) => nb.status as string))].filter(Boolean).sort();
-}
-
 /** Short human description of the active filter, or undefined when none. */
 export function describeFilter(filter: NotebookFilter): string | undefined {
   const parts: string[] = [];

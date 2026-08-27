@@ -80,9 +80,14 @@ export class SshController {
     await this.deps.config.configure();
   }
 
-  /** Generate a new ML Space SSH key via the API and configure the extension to use it. */
+  /** Generate a new Distributed Train SSH key via the API and configure the extension to use it. */
   generateKey(): Promise<string | undefined> {
     return this.deps.config.generateKey();
+  }
+
+  /** Upload a user-owned public key to Distributed Train and point the extension at its private half. */
+  uploadOwnPublicKey(): Promise<string | undefined> {
+    return this.deps.config.uploadOwnPublicKey();
   }
 
   private mount(notebook: NotebookHandlerResponse, root: string): void {

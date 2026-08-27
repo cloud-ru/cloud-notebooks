@@ -24,6 +24,8 @@ export class SshConnection {
   private clientPromise: Promise<Client> | undefined;
   private sftpPromise: Promise<SFTPWrapper> | undefined;
   private readonly forwardServers: net.Server[] = [];
+  /** Live tunnel sockets per forward server, destroyed on dispose (kernel sockets are long-lived). */
+  private readonly forwardSockets = new Map<net.Server, Set<net.Socket>>();
 
   constructor(private readonly config: SshConnectionConfig) {}
 
@@ -45,7 +47,10 @@ export class SshConnection {
    */
   async forward(remoteHost: string, remotePort: number, onError?: (error: Error) => void): Promise<number> {
     const client = await this.getClient();
+    const sockets = new Set<net.Socket>();
     const server = net.createServer((socket) => {
+      sockets.add(socket);
+      socket.on("close", () => sockets.delete(socket));
       socket.on("error", (err) => onError?.(err));
       const srcPort = socket.remotePort ?? 0;
       client.forwardOut(socket.remoteAddress ?? "127.0.0.1", srcPort, remoteHost, remotePort, (err, stream) => {
@@ -62,6 +67,7 @@ export class SshConnection {
       });
     });
     this.forwardServers.push(server);
+    this.forwardSockets.set(server, sockets);
 
     const { promise, resolve, reject } = Promise.withResolvers<number>();
     server.once("error", reject);
@@ -143,6 +149,11 @@ export class SshConnection {
   }
 
   dispose(): void {
+    // Live tunnel sockets keep plain server.close() waiting forever — destroy them first.
+    for (const sockets of this.forwardSockets.values()) {
+      for (const socket of sockets) socket.destroy();
+    }
+    this.forwardSockets.clear();
     for (const server of this.forwardServers) server.close();
     this.forwardServers.length = 0;
     void this.clientPromise?.then((client) => client.end()).catch(() => undefined);

@@ -44,7 +44,7 @@ export class SshConfig {
   ) {}
 
   /** Build the SSH target for a notebook. With `interactive: false` (the kernel picker) it never opens
-   * a dialog — it uses only already-configured key/endpoint and returns undefined otherwise (H11). */
+   * a dialog — it uses only already-configured key/endpoint and returns undefined otherwise. */
   async resolveTarget(
     notebook: NotebookHandlerResponse,
     opts: { interactive?: boolean } = {},
@@ -162,7 +162,7 @@ export class SshConfig {
 
   private async pickPrivateKey(): Promise<string | undefined> {
     const picked = await vscode.window.showOpenDialog({
-      title: "Выберите приватный SSH-ключ ML Space (скачан из консоли)",
+      title: "Выберите приватный SSH-ключ Distributed Train (скачан из консоли)",
       canSelectMany: false,
       openLabel: "Использовать ключ",
     });
@@ -175,19 +175,73 @@ export class SshConfig {
     return path;
   }
 
-  /** When no key is configured, ask how to provide one — generate via the API or pick a file — rather
-   * than dropping the user straight into a file dialog (3.3). Returns the resolved key path. */
+  /** When no key is configured, ask how to provide one — generate via the API, upload your own
+   * public key, or pick an existing file — rather than dropping the user straight into a file dialog.
+   * Returns the resolved private-key path. */
   private async obtainKeyPath(): Promise<string | undefined> {
     const GENERATE = "Сгенерировать новый ключ (старый перестанет работать)";
+    const UPLOAD = "Загрузить свой публичный ключ…";
     const PICK = "Выбрать файл ключа…";
-    const choice = await vscode.window.showQuickPick([GENERATE, PICK], {
-      title: "SSH-ключ ML Space не настроен",
+    const choice = await vscode.window.showQuickPick([GENERATE, UPLOAD, PICK], {
+      title: "SSH-ключ Distributed Train не настроен",
       placeHolder: "Как получить ключ для доступа к ноутбукам по SSH?",
       ignoreFocusOut: true,
     });
     if (choice === GENERATE) return this.generateKey();
+    if (choice === UPLOAD) return this.uploadOwnPublicKey();
     if (choice === PICK) return this.pickPrivateKey();
     return undefined;
+  }
+
+  /**
+   * Upload the user's own public key (`*.pub`) to Distributed Train via
+   * POST /user/v1/user_ssh_keys/public_key — the console's "загрузить свой ключ" path. The private
+   * half never leaves the machine; afterwards the user points the extension at that private key.
+   * Returns the chosen private-key path (undefined on cancel/failure).
+   */
+  async uploadOwnPublicKey(): Promise<string | undefined> {
+    const ws = this.deps.getWorkspace();
+    if (!ws) {
+      void vscode.window.showWarningMessage("Сначала выберите воркспейс Cloud.ru.");
+      return undefined;
+    }
+    const CONFIRM = "Загрузить";
+    const ok = await vscode.window.showWarningMessage(
+      "Публичный ключ заменит текущий ключ Distributed Train: ранее сгенерированный ключ перестанет работать.",
+      { modal: true },
+      CONFIRM,
+    );
+    if (ok !== CONFIRM) return undefined;
+
+    const picked = await vscode.window.showOpenDialog({
+      title: "Выберите файл публичного ключа (*.pub)",
+      canSelectMany: false,
+      openLabel: "Загрузить публичный ключ",
+      filters: { "Публичные ключи": ["pub", "txt"] },
+    });
+    const pubPath = picked?.[0]?.fsPath;
+    if (!pubPath) return undefined;
+    let publicKey: string;
+    try {
+      publicKey = (await fs.promises.readFile(pubPath, "utf8")).trim();
+    } catch (err) {
+      void vscode.window.showErrorMessage(`Не удалось прочитать ${pubPath}: ${(err as Error).message}`);
+      return undefined;
+    }
+    try {
+      await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: "Загрузка публичного ключа…" },
+        () => this.deps.client.uploadUserPublicKey(ws, publicKey),
+      );
+    } catch (err) {
+      void vscode.window.showErrorMessage(`Не удалось загрузить публичный ключ: ${(err as Error).message}`);
+      return undefined;
+    }
+    void vscode.window.showInformationMessage(
+      "Публичный ключ загружен в Cloud.ru. Теперь укажите приватную половину этого ключа.",
+    );
+    // The uploaded key is useless to us without its local private half.
+    return this.pickPrivateKey();
   }
 
   /** Generate a fresh SSH key via the console API, store it 0600 under globalStorage, point the config
@@ -233,7 +287,7 @@ export class SshConfig {
     if (choice !== SAVE) return;
     const uri = await vscode.window.showSaveDialog({
       saveLabel: "Сохранить ключ",
-      defaultUri: vscode.Uri.file("mlspace_ssh_key"),
+      defaultUri: vscode.Uri.file("distributed_train_ssh_key"),
     });
     if (!uri) return;
     try {
