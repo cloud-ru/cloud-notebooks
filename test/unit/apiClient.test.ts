@@ -96,6 +96,95 @@ describe("ConsoleApiClient.resumeNotebook", () => {
   });
 });
 
+describe("ConsoleApiClient.modifyNotebook", () => {
+  it("POSTs the edit payload to /notebooks/v2/{uid}/modify", async () => {
+    const captured: Captured[] = [];
+    const client = makeClient({}, captured);
+
+    await client.modifyNotebook({ workspaceId: "w1", workspaceName: "WS" }, "uid-9", {
+      description: "hello",
+      s3_buckets: [{ bucket_name: "data", access_rule: "rw" }],
+      autoshutdown_config: null,
+    });
+
+    expect(captured[0]?.method).toBe("POST");
+    expect(captured[0]?.url).toBe(
+      "https://console.cloud.ru/aicloud/ui/notebooks/v2/uid-9/modify",
+    );
+    expect(captured[0]?.headers["x-workspace-id"]).toBe("w1");
+    expect(captured[0]?.headers["Content-Type"]).toBe("application/json");
+  });
+});
+
+describe("ConsoleApiClient.uploadUserPublicKey", () => {
+  it("POSTs the trimmed key to /user/v1/user_ssh_keys/public_key", async () => {
+    const captured: Captured[] = [];
+    const client = makeClient({ public_key: "ssh-rsa AAA" }, captured);
+
+    await client.uploadUserPublicKey({ workspaceId: "w1", workspaceName: "WS" }, " ssh-rsa AAA \n");
+
+    expect(captured[0]?.method).toBe("POST");
+    expect(captured[0]?.url).toBe(
+      "https://console.cloud.ru/aicloud/ui/user/v1/user_ssh_keys/public_key",
+    );
+  });
+});
+
+describe("ConsoleApiClient.downloadNotebookLogs", () => {
+  it("GETs the download endpoint with region/asc params and returns text + server file name", async () => {
+    const captured: Captured[] = [];
+    const client = new ConsoleApiClient({
+      baseUrl: "https://console.cloud.ru/aicloud/ui",
+      getToken: async () => "tok",
+      fetchImpl: async (url, init) => {
+        captured.push({ url, method: init.method, headers: { ...init.headers } });
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: (name) => (name === "content-disposition" ? 'attachment; filename="logs.txt"' : null) },
+          text: async () => "log line 1\nlog line 2",
+        };
+      },
+    });
+
+    const out = await client.downloadNotebookLogs(
+      { workspaceId: "w1", workspaceName: "WS" },
+      { namespace: "ns-7", notebookName: "my nb", region: "SR008", startDate: "2026-08-26T00:00:00.000Z" },
+    );
+
+    expect(out).toEqual({ fileName: "logs.txt", content: "log line 1\nlog line 2" });
+    expect(captured[0]?.url).toBe(
+      "https://console.cloud.ru/aicloud/ui/notebooks/v2/ns-7/my%20nb/logs/download" +
+        "?region=SR008&start_date=2026-08-26T00%3A00%3A00.000Z&asc=true",
+    );
+    expect(captured[0]?.headers["x-workspace-id"]).toBe("w1");
+  });
+
+  it("retries once after a 401 and throws a typed ApiError when the retry fails too", async () => {
+    let calls = 0;
+    const client = new ConsoleApiClient({
+      baseUrl: "https://console.cloud.ru/aicloud/ui",
+      getToken: async (forceRefresh?: boolean) => (forceRefresh ? "fresh" : "stale"),
+      fetchImpl: async (_url, init) => {
+        calls += 1;
+        const authorized = init.headers["Authorization"] === "Bearer fresh";
+        return {
+          ok: authorized,
+          status: authorized ? 200 : 401,
+          headers: { get: () => null },
+          text: async () => "unauthorized",
+        };
+      },
+    });
+    // First call burns the stale token; the retry with `fresh` succeeds.
+    await client.downloadNotebookLogs(
+      { workspaceId: "w1", workspaceName: "WS" },
+      { namespace: "ns", notebookName: "nb", region: "r" },
+    );
+    expect(calls).toBe(2);
+  });
+});
+
 describe("ConsoleApiClient.getSshGatewayConfig", () => {
   const body = {
     regions: [

@@ -36,6 +36,8 @@ describe("buildNotebookActions", () => {
       ["Файлы по SSH", "cloudru.openNotebookFiles"],
       ["Полный IDE (Remote-SSH)", "cloudru.openFullIde"],
       ["Показать логи", "cloudru.showLogs"],
+      ["Скачать логи…", "cloudru.downloadLogs"],
+      ["Изменить описание…", "cloudru.editDescription"],
     ])("enables %s", (label, command) => {
       expect(find(actions, label)?.command).toBe(command);
     });
@@ -67,7 +69,7 @@ describe("buildNotebookActions", () => {
   describe("running notebook without access (another user's server)", () => {
     const actions = buildNotebookActions(nb({ status: "running", accessGranted: false }), false);
 
-    it.each(["Открыть в VS Code", "Файлы по SSH", "Полный IDE (Remote-SSH)", "Показать логи"])(
+    it.each(["Открыть в VS Code", "Файлы по SSH", "Полный IDE (Remote-SSH)", "Показать логи", "Скачать логи…", "Изменить описание…"])(
       "disables %s with the no-access reason",
       (label) => {
         const a = find(actions, label);
@@ -75,6 +77,25 @@ describe("buildNotebookActions", () => {
         expect(a?.description).toBe(NO_ACCESS);
       },
     );
+  });
+
+  describe("transient (busy) statuses use the transition reason, not 'not running'", () => {
+    const actions = buildNotebookActions(nb({ status: "pausing" }), false);
+
+    it.each(["Открыть в VS Code", "Остановить", "Файлы по SSH", "Полный IDE (Remote-SSH)", "Запустить"])(
+      "disables %s with the transition reason",
+      (label) => {
+        const a = find(actions, label);
+        expect(a?.command).toBeUndefined();
+        expect(a?.description).toBe("Недоступно: идёт смена статуса");
+      },
+    );
+
+    it("disables the delete action because an operation is already in flight", () => {
+      const a = find(actions, DELETE);
+      expect(a?.command).toBeUndefined();
+      expect(a?.description).toBe("Недоступно: операция уже выполняется");
+    });
   });
 
   describe("monitoring", () => {

@@ -16,7 +16,7 @@ export interface AutoRefreshDeps {
 /**
  * Background refresher for the notebooks tree: while the window is focused and a workspace is loaded,
  * re-poll every 15s (busy statuses present) or 60s (idle), and pause entirely when the window loses
- * focus (improvement-plan 4.5). Overlapping fetches are deduped by ConsoleApiClient.
+ * focus. Overlapping fetches are deduped by ConsoleApiClient.
  */
 export class AutoRefresh {
   private timer: NodeJS.Timeout | undefined;

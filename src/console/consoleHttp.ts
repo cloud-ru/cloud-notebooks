@@ -17,7 +17,7 @@ import { ApiError } from "../api/errors";
 import { createUpstreamAgent } from "../jupyter/upstreamAgent";
 
 /** Default per-request timeout. A hung socket (corporate proxy, dropped network) otherwise wedges the
- * tree spinner and `pollUntil` forever — see improvement-plan H1. */
+ * tree spinner and `pollUntil` forever. */
 export const DEFAULT_HTTP_TIMEOUT_MS = 30_000;
 
 export interface HttpResponse {

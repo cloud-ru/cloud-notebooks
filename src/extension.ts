@@ -127,7 +127,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(autoRefresh);
   autoRefresh.start();
 
-  logger.info("Cloud.ru ML Space extension activated.");
+  logger.info("Cloud.ru Distributed Train extension activated.");
 }
 
 export function deactivate(): void {
@@ -152,7 +152,7 @@ async function registerJupyterServerCollection(
   }
   try {
     const api = extension.isActive ? extension.exports : await extension.activate();
-    const collection = api.createJupyterServerCollection("cloudru-mlspace", "Cloud.ru ML Space", provider);
+    const collection = api.createJupyterServerCollection("cloudru-mlspace", "Cloud.ru Distributed Train", provider);
     context.subscriptions.push(collection);
   } catch (err) {
     logger.error("Failed to register the Cloud.ru Jupyter server collection", err);

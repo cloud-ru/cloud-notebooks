@@ -37,7 +37,7 @@ export interface ResolvedHarborImage {
 /**
  * Build the resume payload. Artifact-registry images carry fixed authz/healthz labels. Harbor images
  * default to empty labels, but if `resolved` is supplied (found via the docker_images lookup) its
- * name/tag/type/labels win — matching the web app's useResumeNotebookMutation (A1.1/2.4).
+ * name/tag/type/labels win — matching the web app's useResumeNotebookMutation.
  */
 export function buildResumeBody(notebook: NotebookHandlerResponse, resolved?: ResolvedHarborImage): ResumeBody {
   const image: ResumeImage =

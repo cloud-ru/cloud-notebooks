@@ -41,7 +41,7 @@ export class ConsoleTokenProvider {
   private readonly onDidChange = new vscode.EventEmitter<boolean>();
   readonly onDidChangeAuth = this.onDidChange.event;
   /** Fires while a silent (headless) mint is in flight, so the tree can show "signing in…" instead of
-   * a bare, seemingly-stuck spinner after a window reload (H8/1.6). */
+   * a bare, seemingly-stuck spinner after a window reload. */
   private readonly onMinting = new vscode.EventEmitter<boolean>();
   readonly onDidChangeMinting = this.onMinting.event;
   private minting = 0;
@@ -53,14 +53,14 @@ export class ConsoleTokenProvider {
   }
 
   /** True when the last sign-out was due to an expired SSO session (vs an explicit sign-out or a
-   * fresh, never-signed-in state). Drives the "session expired" welcome view (4.3). */
+   * fresh, never-signed-in state). Drives the "session expired" welcome view. */
   get sessionExpired(): boolean {
     return this.expiryAnnounced;
   }
 
   /** Interactive sign-in: opens a real browser window and waits for the SSO cookie. Wrapped in a
    * cancellable progress notification so the user knows the extension is waiting on the browser, and
-   * so cancelling actually closes the window instead of leaving it stranded for up to 5 minutes (H5). */
+   * so cancelling actually closes the window instead of leaving it stranded for up to 5 minutes. */
   async signIn(): Promise<boolean> {
     let cancelled = false;
     const token = await vscode.window.withProgress(
@@ -101,7 +101,7 @@ export class ConsoleTokenProvider {
   /** A silent mint failed → the persisted SSO session is gone. Flip to signed-out (so the tree shows
    * its sign-in welcome view and later calls short-circuit instead of each stalling ~30s on a headless
    * mint) and prompt the user to re-authenticate. One-shot until the next successful sign-in. Public so
-   * command error handling can route a post-retry 401 through the same single path (H7). */
+   * command error handling can route a post-retry 401 through the same single path. */
   async handleExpiredSession(): Promise<void> {
     if (this.expiryAnnounced || !(await this.isSignedIn())) return;
     this.expiryAnnounced = true;
@@ -126,7 +126,7 @@ export class ConsoleTokenProvider {
     if (forceRefresh) this.cached = undefined;
     if (this.cached && !isJwtExpired(this.cached)) return this.cached;
     // Never launch a (headless) browser when the user isn't signed in — that is a 30s stall for
-    // nothing. Only the interactive signIn() path may open a browser while signed out (H2).
+    // nothing. Only the interactive signIn() path may open a browser while signed out.
     if (!(await this.isSignedIn())) throw new NotSignedInError();
     const token = await this.withMinting(() => this.mint(false));
     if (!token) {
@@ -188,7 +188,7 @@ export class ConsoleTokenProvider {
       defaultViewport: null,
       args: ["--no-first-run", "--no-default-browser-check"],
     });
-    // Cancelling the sign-in progress must actually close the window (H5), not orphan it for 5 min.
+    // Cancelling the sign-in progress must actually close the window, not orphan it for 5 min.
     const onAbort = (): void => void browser.close().catch(() => undefined);
     if (signal) signal.addEventListener("abort", onAbort);
     try {

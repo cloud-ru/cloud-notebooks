@@ -142,6 +142,12 @@ export class CloudruSshFsProvider implements vscode.FileSystemProvider {
   }
 
   async rename(oldUri: vscode.Uri, newUri: vscode.Uri, options: { overwrite: boolean }): Promise<void> {
+    if (oldUri.authority !== newUri.authority) {
+      // SFTP can only move within one server; cross-notebook moves are not meaningful here.
+      throw vscode.FileSystemError.NoPermissions(
+        `Cannot move between two notebooks (${oldUri.authority} → ${newUri.authority})`,
+      );
+    }
     try {
       const sftp = await this.sftpFor(oldUri.authority);
       if (options.overwrite && (await this.exists(sftp, this.path(newUri)))) {
@@ -154,6 +160,39 @@ export class CloudruSshFsProvider implements vscode.FileSystemProvider {
       ]);
     } catch (err) {
       throw toFsError(err, newUri);
+    }
+  }
+
+  /** Recursive copy (Explorer "Copy/Paste"). The provider implements it because the default
+   * read+write fallback would re-download whole files through readFile instead of streaming. */
+  async copy(source: vscode.Uri, destination: vscode.Uri, options: { overwrite: boolean }): Promise<void> {
+    try {
+      const sftp = await this.sftpFor(source.authority);
+      const srcPath = this.path(source);
+      const dstPath = this.path(destination);
+      const stats = await call<Stats>((cb) => sftp.lstat(srcPath, (err, s) => cb(err, s)));
+      const exists = await this.exists(sftp, dstPath);
+      if (exists && !options.overwrite) throw vscode.FileSystemError.FileExists(destination);
+      if (!stats.isDirectory()) {
+        const content = await readFile(sftp, srcPath);
+        await call<void>((cb) => sftp.writeFile(dstPath, content, (err) => cb(err)));
+      } else {
+        if (!exists) {
+          await call<void>((cb) => sftp.mkdir(dstPath, (err) => cb(err)));
+        }
+        for (const entry of await this.readDirectory(source)) {
+          await this.copy(
+            withPath(source, entry[0]),
+            withPath(destination, entry[0]),
+            { overwrite: true },
+          );
+        }
+      }
+      this.emitter.fire([{ type: exists ? vscode.FileChangeType.Changed : vscode.FileChangeType.Created, uri: destination }]);
+    } catch (err) {
+      // Re-throw FileSystemErrors we raised ourselves (e.g. FileExists) untouched.
+      if (err instanceof vscode.FileSystemError) throw err;
+      throw toFsError(err, destination);
     }
   }
 
@@ -203,4 +242,17 @@ export class CloudruSshFsProvider implements vscode.FileSystemProvider {
     this.connections.clear();
     this.emitter.dispose();
   }
+}
+
+/** Promise-based sftp.readFile (the ssh2 callback API is inconsistent about buffer vs string). */
+function readFile(sftp: SFTPWrapper, path: string): Promise<Buffer> {
+  return new Promise<Buffer>((resolve, reject) =>
+    sftp.readFile(path, (err, data) => (err ? reject(err) : resolve(data as Buffer))),
+  );
+}
+
+/** Child URI one path segment below `parent` (paths are POSIX in the cloudru-ssh scheme). */
+function withPath(parent: vscode.Uri, segment: string): vscode.Uri {
+  const joined = posix.join(parent.path || "/", segment);
+  return parent.with({ path: joined });
 }

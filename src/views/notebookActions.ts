@@ -1,7 +1,7 @@
 // Pure builder for the per-notebook action list shown in the QuickPick / context submenu. No `vscode`
 // → unit-testable. Unavailable actions are kept (not hidden) with a reason in `description` and no
-// `command`, so the user sees *why* an action is greyed out (improvement-plan 4.1). Monitoring is the
-// one exception the web app hides outright (DGX2_MT).
+// `command`, so the user sees *why* an action is greyed out. Monitoring is the one exception the web
+// console hides outright.
 import type { NotebookHandlerResponse } from "../api/types";
 import { presentNotebookStatus } from "../util/notebookStatus";
 
@@ -11,7 +11,6 @@ export interface NotebookAction {
   description: string;
   /** Command to run, or undefined when the action is shown disabled. */
   command?: string;
-  /** Argument passing convention: commands receive the tree item, favorites included. */
 }
 
 const NO_ACCESS = "Нет доступа: индивидуальный Jupyter Server другого пользователя";
@@ -21,7 +20,10 @@ export function buildNotebookActions(nb: NotebookHandlerResponse, isFavorite: bo
   const p = presentNotebookStatus(nb.status);
   const access = nb.accessGranted !== false;
   const isDeleted = nb.status === "deleted";
-  const notRunning = "Недоступно: ноутбук не запущен";
+  const transition = "Недоступно: идёт смена статуса";
+  // Running is a precondition of everything below; a transient status gets its own reason instead of
+  // the misleading "ноутбук не запущен".
+  const notRunning = p.isBusy ? transition : "Недоступно: ноутбук не запущен";
 
   const gate = (
     label: string,
@@ -51,19 +53,37 @@ export function buildNotebookActions(nb: NotebookHandlerResponse, isFavorite: bo
       "Включить остановленный сервер (счёт за ресурсы возобновится)",
       "cloudru.resumeNotebook",
       p.isPaused,
-      "Недоступно: ноутбук не на паузе",
+      p.isBusy ? transition : "Недоступно: ноутбук не на паузе",
     ),
     gate(
       "Остановить",
       "Несохранённые данные вне NFS будут утеряны",
       "cloudru.pauseNotebook",
       p.isRunning,
-      "Недоступно: ноутбук не запущен",
+      p.isBusy ? transition : "Недоступно: ноутбук не запущен",
+    ),
+    gate(
+      "Изменить описание…",
+      "Описание показывается в списке и в консоли",
+      "cloudru.editDescription",
+      !p.isBusy && !isDeleted && access,
+      !access
+        ? NO_ACCESS
+        : p.isBusy
+          ? transition
+          : "Недоступно для этого статуса",
     ),
     gate(
       "Показать логи",
       "Логи ноутбука и причина статуса",
       "cloudru.showLogs",
+      !p.isPaused && !p.isBusy && !isDeleted && access,
+      !access ? NO_ACCESS : "Недоступно для этого статуса",
+    ),
+    gate(
+      "Скачать логи…",
+      "Логи за последние сутки/3/7 дней в файл",
+      "cloudru.downloadLogs",
       !p.isPaused && !p.isBusy && !isDeleted && access,
       !access ? NO_ACCESS : "Недоступно для этого статуса",
     ),

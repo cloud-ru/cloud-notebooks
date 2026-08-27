@@ -13,7 +13,7 @@
 //
 // If anything here fails, the caller proceeds anyway and Remote-SSH falls back to its own installer.
 //
-// No `vscode` import → unit-testable (Р7). All effects are injected via `PreseedDeps`.
+// No `vscode` import → unit-testable. All effects are injected via `PreseedDeps`.
 
 import * as fs from "node:fs";
 import * as path from "node:path";

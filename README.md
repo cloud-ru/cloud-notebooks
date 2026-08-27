@@ -1,135 +1,125 @@
 <div align="center">
 
-# Cloud.ru ML Space Notebooks
+# Cloud.ru Distributed Train Notebooks
 
-**Работайте с ноутбуками Cloud.ru ML Space прямо в VS Code — без вкладки браузера.**
+**Work with Cloud.ru Distributed Train Jupyter Servers right inside VS Code and Cursor — no browser tab needed.**
 
-Войдите в Cloud.ru, выберите воркспейс, просматривайте свои ноутбуки и открывайте их веб-интерфейс,
-запускайте ячейки на облачном ядре, ходите по файлам пода и открывайте полноценный Remote-SSH IDE —
-всё из редактора.
+Sign in to Cloud.ru, pick a workspace, browse your notebooks, open their web UI in an editor tab,
+run cells on the remote cloud kernel, browse pod files over SSH, or go full Remote-SSH IDE.
 
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](#лицензия)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![VS Code](https://img.shields.io/badge/VS%20Code-%5E1.90-007ACC.svg?logo=visualstudiocode)](https://code.visualstudio.com/)
+[![Cursor](https://img.shields.io/badge/Cursor-supported-4B0082.svg)](https://cursor.com)
 [![Node](https://img.shields.io/badge/Node-%E2%89%A522-339933.svg?logo=nodedotjs)](https://nodejs.org/)
 [![pnpm](https://img.shields.io/badge/pnpm-10-F69220.svg?logo=pnpm)](https://pnpm.io/)
+
+[English](README.md) · [Русский](README.ru.md)
 
 </div>
 
 ---
 
-## Возможности
+## Features
 
-- **Вход через Cloud.ru** — по SSO в браузере, без ключей и без регистрации OAuth-клиента.
-- **Список ноутбуков** воркспейса с живым статусом; поиск по имени, фильтр по автору и статусу, избранное.
-- **Открытие веб-UI ноутбука внутри VS Code** — JupyterLab, marimo, VS Code-образ и другие.
-- **Удалённое ядро (как в Colab)** — ячейки исполняются на облачном ядре через стандартное
-  Jupyter-расширение.
-- **Файлы пода по SSH/SFTP** — браузер файлов прямо в проводнике VS Code.
-- **Полный IDE-режим** — открыть под как окно **Remote-SSH** (терминал, IntelliSense на удалёнке).
-- **Пауза и запуск** ноутбука одной кнопкой.
+- **Cloud.ru sign-in via SSO** — no API keys, no OAuth app registration. The extension captures the
+  same session token the web console uses.
+- **Notebook explorer** for your workspace with live statuses, search by name, author/status
+  filters, and favorites. Description editing is one command away.
+- **Open the notebook web UI inside VS Code** — JupyterLab, marimo, code-server images and more,
+  embedded through a local SSH tunnel + reverse proxy.
+- **Remote kernels (Colab-style)** — notebook files run cells on the cloud kernel through the
+  standard Jupyter extension's server picker.
+- **Pod files over SSH/SFTP** — mount the notebook home folder right into the Explorer, with full
+  copy/paste/rename/delete support.
+- **Full IDE mode** — open the pod as a **Remote-SSH** window (the extension even pre-seeds the
+  VS Code/Cursor server onto the pod so slow egress doesn't block you).
+- **Lifecycle from the editor** — start/pause/delete notebooks with progress tracking and status
+  polling; view logs inline or download them for the last 1/3/7 days.
+- **SSH key management** — generate a key in Cloud.ru or upload your own public key.
 
----
+## How it works
 
-## Как это работает
+Sign in once with your Cloud.ru account (SSO in the browser). The extension lists your Jupyter
+Server notebooks and manages their lifecycle, and connects to running notebooks over SSH — for the
+embedded web UI, remote kernels, file browsing, and Remote-SSH.
 
-Данные (список воркспейсов и ноутбуков, пауза/запуск) идут через **web-API консоли**
-(`console.cloud.ru/aicloud/ui`) с OIDC-токеном, который расширение получает так же, как веб-консоль —
-захватывает из браузера после SSO. Работа с самим подом (веб-UI, ядро, файлы) идёт через **SSH-туннель**
-к поду, минуя OIDC-прокси перед ноутбуком.
+## Getting started (development)
 
-```mermaid
-flowchart LR
-    U["VS Code / Cursor"] -->|OIDC Bearer| C["console.cloud.ru/aicloud/ui"]
-    U -->|"SSH -L :8888"| P["Под: JupyterLab + sshd"]
-    C -. метаданные ноутбуков .-> U
-```
-
-Подробности, схемы потоков и карта модулей — в [docs/architecture.md](docs/architecture.md).
-
----
-
-## Быстрый старт (разработка)
+Requirements: Node.js ≥ 22, pnpm 10 (`corepack enable`), VS Code ≥ 1.90 / Cursor, and a local
+Chrome/Chromium/Edge for the sign-in flow.
 
 ```bash
 pnpm install
 pnpm bundle:watch     # esbuild watch → dist/extension.js
-# нажмите F5 → «Run Extension» (см. .vscode/launch.json)
+# press F5 → "Run Extension"
 ```
 
-Во втором окне (Extension Development Host): откройте вью **Cloud.ru ML Space** → **Sign in** →
-**Select Workspace** → работайте со списком ноутбуков.
-
-Полный гайд (требования, тесты, сборка `.vsix`, публикация, диагностика) —
-в [docs/development.md](docs/development.md).
+In the Extension Development Host window: open the **Cloud.ru Distributed Train** view → **Sign In** →
+**Select Workspace** → work with your notebooks.
 
 ```bash
-pnpm test         # юнит-тесты (vitest)
-pnpm typecheck    # проверка типов (tsc --noEmit)
-pnpm bundle       # разовая сборка
+pnpm test         # unit tests (vitest)
+pnpm typecheck    # tsc --noEmit
+pnpm bundle       # one-shot build
 ```
 
----
+The full guide (packaging a `.vsix`, publishing, manual smoke checklist, diagnostics) lives in
+[docs/development.md](docs/development.md).
 
-## Команды
+## Commands
 
-Все доступны через палитру (`Cmd/Ctrl+Shift+P`, префикс «Cloud.ru:») и меню **«…»** на строке ноутбука
-(действия описаны словами). Фильтры собраны в меню-воронку в шапке вью.
+All commands are available from the Command Palette (`Cmd/Ctrl+Shift+P`, prefix "Cloud.ru:") and
+from the `…` menu next to each notebook.
 
-| Команда | Действие |
-|---------|----------|
-| Sign In / Sign Out | Вход/выход в Cloud.ru |
-| Select Workspace | Выбрать воркспейс |
-| Refresh Notebooks | Обновить список |
-| Open Notebook in VS Code | Открыть веб-UI ноутбука в редакторе |
-| Open Notebook in Browser | Открыть ноутбук во внешнем браузере |
-| Start / Pause Notebook | Запустить / поставить на паузу |
-| Browse Notebook Files (SSH) | Открыть файлы пода по SFTP |
-| Open Full IDE (Remote-SSH) | Открыть под как Remote-SSH окно |
-| Configure SSH | Настроить ключ и account-id |
-| Search / Filter by Author / Filter by Status / Favorites | Поиск, фильтр по автору и статусу, избранное |
+| Command | Action |
+|---------|--------|
+| Sign In / Sign Out | Sign in to / out of Cloud.ru |
+| Select Workspace | Pick the workspace to browse |
+| Refresh Notebooks | Re-fetch the notebook list |
+| Open Notebook in VS Code | Embed the notebook web UI in an editor tab |
+| Open Notebook in Browser | Open Jupyter/JupyterLab externally |
+| Start / Pause Notebook | Resume / pause with live status polling |
+| Show Logs | Inline logs + status reason |
+| Download Logs… | Save logs from the last 1/3/7 days |
+| Edit Description… | Change the description shown in the list and console |
+| Browse Notebook Files (SSH) | Mount the pod home folder via SFTP |
+| Open Full IDE (Remote-SSH) | Open the pod as a Remote-SSH window |
+| Configure SSH / Get SSH Key / Upload Public SSH Key | Manage the Distributed Train SSH key |
+| Search / Filter by Author / Filter by Status / Favorites | Filter the list |
 
----
+## Settings
 
-## Настройки
+| Key | Default | Purpose |
+|-----|---------|---------|
+| `cloudru.console.apiBaseUrl` | `https://console.cloud.ru/aicloud/ui` | Console web API base URL |
+| `cloudru.console.url` | `https://console.cloud.ru/` | Console URL opened for sign-in |
+| `cloudru.notebook.chromePath` | *(auto-detect)* | Browser executable used for the one-time sign-in |
+| `cloudru.ssh.privateKeyPath` | *(empty)* | Distributed Train private key (files, kernels, IDE) |
+| `cloudru.ssh.host` | `ssh-jupyter.ai.cloud.ru` | Fallback gateway host when only an account id is given |
+| `cloudru.ssh.port` | `2222` | Gateway port |
 
-| Ключ | По умолчанию | Назначение |
-|------|--------------|------------|
-| `cloudru.console.apiBaseUrl` | `https://console.cloud.ru/aicloud/ui` | База web-API консоли |
-| `cloudru.console.url` | `https://console.cloud.ru/` | URL, открываемый для входа и захвата токена |
-| `cloudru.notebook.chromePath` | `` (автоопределение) | Путь к Chrome/Chromium/Edge для входа |
-| `cloudru.ssh.privateKeyPath` | `` | SSH-ключ ML Space (для файлов, ядра, IDE) |
-| `cloudru.ssh.host` | `ssh-jupyter.ai.cloud.ru` | Дефолтный хост SSH-шлюза (обычно берётся из вставленной SSH-команды) |
-| `cloudru.ssh.port` | `2222` | Порт SSH-шлюза |
-
----
-
-## Документация
-
-| Документ | О чём |
-|----------|-------|
-| [docs/architecture.md](docs/architecture.md) | Обзор системы, схемы потоков, карта модулей |
-| [docs/development.md](docs/development.md) | Запуск в дев-режиме, тесты, сборка, публикация |
-| [docs/decisions.md](docs/decisions.md) | Архитектурные решения и их обоснование (ADR) |
-
-Справочник: [`docs/reference/vscode-jupyter-api.d.ts`](docs/reference/vscode-jupyter-api.d.ts) — типы
-API Jupyter-расширения, используемого для удалённого ядра.
-
----
-
-## Структура проекта
+## Repository layout
 
 ```
-src/            исходники расширения (console, jupyter, ssh, views, commands, …)
-test/unit/      юнит-тесты (vitest)
-docs/           документация (архитектура, дев-гайд, решения, справочники)
-esbuild.js      бандлер
-package.json    манифест расширения (команды, вью, настройки)
+src/            extension sources (api, auth, console, jupyter, ssh, views, commands)
+test/unit/      vitest unit tests (network-free, injected fetch)
+docs/           dev guide
+esbuild.js      bundler config
+package.json    extension manifest (commands, views, settings)
 ```
 
-Карта всех модулей — в [docs/architecture.md](docs/architecture.md#карта-модулей).
+## Documentation
 
----
+| Document | Contents |
+|----------|----------|
+| [docs/development.md](docs/development.md) | Dev workflow, tests, packaging, publishing |
 
-## Лицензия
+## Contributing
 
-Проект распространяется под лицензией **Apache-2.0** (поле `license` в `package.json`).
+Bug reports and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+Security issues: [SECURITY.md](SECURITY.md). Changes are tracked in
+[CHANGELOG.md](CHANGELOG.md).
+
+## License
+
+[Apache-2.0](LICENSE)

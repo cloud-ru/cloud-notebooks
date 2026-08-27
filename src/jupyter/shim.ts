@@ -70,7 +70,10 @@ export class NotebookShim {
   }
 
   dispose(): void {
+    // closeAllConnections matters: proxied WebSocket/kernel sockets are long-lived, and plain
+    // close() only stops new accepts while keeping live handles (and the extension host) busy.
     this.server.close();
+    this.server.closeAllConnections();
     this.proxy.close();
   }
 }

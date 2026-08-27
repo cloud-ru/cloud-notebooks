@@ -49,7 +49,7 @@ const terminal = (icon: string, label: string, color?: string): StatusPresentati
 });
 
 // One entry per NotebookStatus (the Record forces exhaustiveness — a new status won't compile until
-// it is presented here). Labels/groups mirror the console (see improvement-plan «Справочник»).
+// it is presented here). Labels/groups mirror the web console.
 const PRESENTATIONS: Record<NotebookStatus, StatusPresentation> = {
   running: RUNNING,
   paused: paused("На паузе"),

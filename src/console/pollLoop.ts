@@ -22,15 +22,15 @@ export interface PollLoopDeps {
   isComplete: (notebook: NotebookHandlerResponse | undefined) => boolean;
   /** Terminal failure predicate (e.g. resume ended in `error`/`rejected`). */
   isFailed?: (notebook: NotebookHandlerResponse | undefined) => boolean;
-  /** Feed each fresh list straight to the tree so we never double-fetch (H8). */
+  /** Feed each fresh list straight to the tree so we never double-fetch. */
   onNotebooks?: (notebooks: NotebookHandlerResponse[]) => void;
   /** True when the user cancelled the progress. */
   isCancelled?: () => boolean;
-  /** Recognizes a "session expired" error so the loop stops instead of hammering headless mints (H3). */
+  /** Recognizes a "session expired" error so the loop stops instead of hammering headless mints. */
   isSignedOutError?: (error: unknown) => boolean;
   timeoutMs: number;
   intervalMs?: number;
-  /** Consecutive transport errors tolerated before giving up (H4). */
+  /** Consecutive transport errors tolerated before giving up. */
   maxConsecutiveErrors?: number;
   now?: () => number;
   delay?: (ms: number) => Promise<void>;
