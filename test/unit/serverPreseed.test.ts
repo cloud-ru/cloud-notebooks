@@ -193,7 +193,8 @@ const silentLog = { info: () => undefined, warn: () => undefined };
 /** Fake exec speaking the probe/speed/install script protocol. */
 function fakeExec(opts: { serverPresent?: boolean; cliPresent?: boolean; podSpeed?: number | "unknown" }) {
   const calls: string[] = [];
-  const exec = async (_cmd: string, stdin?: string) => {
+  const installDeadlines: (number | undefined)[] = [];
+  const exec = async (_cmd: string, stdin?: string, _signal?: AbortSignal, deadlineMs?: number) => {
     calls.push(stdin ?? "");
     if (stdin?.includes("uname -m")) {
       return {
@@ -211,9 +212,10 @@ function fakeExec(opts: { serverPresent?: boolean; cliPresent?: boolean; podSpee
     if (stdin?.includes("speed_download")) {
       return { code: 0, stdout: `speed=${opts.podSpeed ?? "unknown"}\n`, stderr: "" };
     }
-    return { code: 0, stdout: "", stderr: "" }; // install script
+    installDeadlines.push(deadlineMs); // install script
+    return { code: 0, stdout: "", stderr: "" };
   };
-  return { exec, calls };
+  return { exec, calls, installDeadlines };
 }
 
 describe("preseedServer decisions", () => {
@@ -255,7 +257,70 @@ describe("preseedServer decisions", () => {
     await expect(
       preseedServer({ product, exec, sftp: noSftp, cacheDir: tempDir(), fetchImpl: noFetch, log: silentLog }),
     ).rejects.toThrow("fetch must not be used");
+
     expect(calls.some((script) => script.includes("speed_download"))).toBe(true);
+  });
+  it("seeds through upload and gives the install unpack a long deadline", async () => {
+    const { exec, installDeadlines } = fakeExec({ podSpeed: 1000, cliPresent: true });
+    const sftp = {
+      fastPut: (...args: unknown[]) => (args[args.length - 1] as (err?: unknown) => void)(null),
+      end: () => undefined,
+    };
+    const result = await preseedServer({
+      product,
+      exec,
+      sftp: async () => sftp as never,
+      cacheDir: tempDir(),
+      fetchImpl: rangedFetch(makePayload(1024 * 1024)),
+      log: silentLog,
+    });
+    expect(result).toEqual({ status: "seeded", cliSeeded: false });
+    expect(installDeadlines).toEqual([600_000]);
+  });
+
+  it("passes cancellation to a stalled probe", async () => {
+    const controller = new AbortController();
+    const started = Promise.withResolvers<void>();
+    const running = preseedServer({
+      product,
+      exec: (_command, _stdin, signal) => new Promise((_resolve, reject) => {
+        started.resolve();
+        signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
+      }),
+      sftp: noSftp,
+      cacheDir: tempDir(),
+      fetchImpl: noFetch,
+      signal: controller.signal,
+      log: silentLog,
+    });
+    await started.promise;
+    controller.abort();
+    await expect(running).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it("ends a stalled SFTP upload as soon as the user cancels", async () => {
+    const cacheDir = tempDir();
+    fs.writeFileSync(path.join(cacheDir, `server-${COMMIT}-linux-x64.tar.gz`), "cached");
+    const controller = new AbortController();
+    const started = Promise.withResolvers<void>();
+    let ended = false;
+    const sftp = {
+      fastPut: () => { started.resolve(); },
+      end: () => { ended = true; },
+    };
+    const { exec } = fakeExec({ cliPresent: true });
+    const running = preseedServer({
+      product,
+      exec,
+      sftp: async () => sftp as never,
+      cacheDir,
+      signal: controller.signal,
+      log: silentLog,
+    });
+    await started.promise;
+    controller.abort();
+    await expect(running).rejects.toMatchObject({ name: "AbortError" });
+    expect(ended).toBe(true);
   });
 });
 

@@ -33,6 +33,10 @@ export class CloudruServerProvider implements JupyterServerProvider {
   // Each forward remembers the notebook URL it was built for; a pause→resume changes the URL (or drops
   // the notebook), so a stale forward is disposed rather than handed back to a dead pod.
   private readonly forwards = new Map<string, { connection: SshConnection; baseUrl: string; url: string }>();
+  private readonly inFlightForwards = new Map<string, Promise<string>>();
+  private readonly versions = new Map<string, number>();
+  private generation = 0;
+  private disposed = false;
 
   constructor(private readonly deps: CloudruServerProviderDeps) {}
 
@@ -41,19 +45,22 @@ export class CloudruServerProvider implements JupyterServerProvider {
   }
 
   async provideJupyterServers(): Promise<JupyterServer[]> {
+    const generation = this.generation;
     try {
       const running = (await this.deps.getRunningNotebooks()).filter((nb) => nb.status === "running" && nb.url);
+      if (this.disposed || generation !== this.generation) return [];
       this.notebooks.clear();
       for (const nb of running) this.notebooks.set(nb.uid, nb);
       this.pruneStaleForwards();
       return running.map((nb) => ({ id: nb.uid, label: nb.name }));
     } catch (err) {
+      if (this.disposed || generation !== this.generation) return [];
       if (err instanceof NotSignedInError) {
         this.deps.logger.info("provideJupyterServers: Cloud.ru session expired; prompting re-auth.");
-        return [];
+        throw err;
       }
       this.deps.logger.error("provideJupyterServers failed", err);
-      return [];
+      throw err;
     }
   }
 
@@ -79,9 +86,30 @@ export class CloudruServerProvider implements JupyterServerProvider {
   }
 
   private async ensureForward(uid: string): Promise<string> {
+    if (this.disposed) throw new Error("Kernel server provider was closed");
+    const pending = this.inFlightForwards.get(uid);
+    if (pending) return pending;
+    const generation = this.generation;
+    const version = this.versions.get(uid) ?? 0;
+    const creating = this.createForward(uid, generation, version).finally(() => {
+      if (this.inFlightForwards.get(uid) === creating) this.inFlightForwards.delete(uid);
+    });
+    this.inFlightForwards.set(uid, creating);
+    return creating;
+  }
+
+  private isCurrent(uid: string, generation: number, version: number): boolean {
+    return !this.disposed && generation === this.generation && version === (this.versions.get(uid) ?? 0);
+  }
+
+  private async createForward(uid: string, generation: number, version: number): Promise<string> {
     const existing = this.forwards.get(uid);
     if (existing) {
-      if (await probeHttpAlive(existing.baseUrl, { acceptAny: true })) return existing.baseUrl;
+      if (await probeHttpAlive(existing.baseUrl, { acceptAny: true })) {
+        if (!this.isCurrent(uid, generation, version)) throw new Error("Kernel context changed");
+        return existing.baseUrl;
+      }
+      if (!this.isCurrent(uid, generation, version)) throw new Error("Kernel context changed");
       this.deps.logger.info(`Kernel tunnel for ${uid} is unresponsive; rebuilding.`);
       existing.connection.dispose();
       this.forwards.delete(uid);
@@ -95,19 +123,31 @@ export class CloudruServerProvider implements JupyterServerProvider {
     // The kernel picker must never open dialogs — resolve non-interactively and fail clearly.
     const target = await this.deps.config.resolveTarget(notebook, { interactive: false });
     if (!target) throw new Error("SSH не настроен. Выполните команду «Cloud.ru: Настроить SSH».");
+    if (!this.isCurrent(uid, generation, version)) throw new Error("Kernel context changed");
 
     const connection = new SshConnection(target);
-    const localPort = await connection.forward("127.0.0.1", POD_JUPYTER_PORT, (err) =>
-      this.deps.logger.error(`Kernel tunnel error for ${notebook.name}`, err),
-    );
-    const baseUrl = buildKernelBaseUrl(localPort, parseNotebookUrl(notebook.url).prefix);
-    this.forwards.set(uid, { connection, baseUrl, url: notebook.url });
-    this.deps.logger.info(`Kernel tunnel for ${notebook.name}: ${baseUrl}`);
-    return baseUrl;
+    try {
+      const localPort = await connection.forward("127.0.0.1", POD_JUPYTER_PORT, (err) =>
+        this.deps.logger.error(`Kernel tunnel error for ${notebook.name}`, err),
+      );
+      if (!this.isCurrent(uid, generation, version) || this.notebooks.get(uid)?.url !== notebook.url) {
+        throw new Error("Kernel context changed");
+      }
+      const baseUrl = buildKernelBaseUrl(localPort, parseNotebookUrl(notebook.url).prefix);
+      this.forwards.set(uid, { connection, baseUrl, url: notebook.url });
+      this.deps.logger.info(`Kernel tunnel for ${notebook.name}: ${baseUrl}`);
+      return baseUrl;
+    } catch (error) {
+      connection.dispose();
+      throw error;
+    }
   }
 
   /** Drop the cached forward for a uid (after a pause/resume) so the next connect rebuilds it. */
   invalidate(uid: string): void {
+    this.versions.set(uid, (this.versions.get(uid) ?? 0) + 1);
+    this.inFlightForwards.delete(uid);
+    this.notebooks.delete(uid);
     const fwd = this.forwards.get(uid);
     if (!fwd) return;
     fwd.connection.dispose();
@@ -116,13 +156,16 @@ export class CloudruServerProvider implements JupyterServerProvider {
 
   /** Tear down every forward (sign-out / workspace switch). */
   disposeAll(): void {
+    this.generation++;
     for (const { connection } of this.forwards.values()) connection.dispose();
     this.forwards.clear();
+    this.inFlightForwards.clear();
+    this.notebooks.clear();
   }
 
   dispose(): void {
-    for (const { connection } of this.forwards.values()) connection.dispose();
-    this.forwards.clear();
+    this.disposed = true;
+    this.disposeAll();
     this.didChange.dispose();
   }
 }

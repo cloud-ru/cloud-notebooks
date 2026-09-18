@@ -8,7 +8,7 @@ Sign in to Cloud.ru, pick a workspace, browse your notebooks, open their web UI 
 run cells on the remote cloud kernel, browse pod files over SSH, or go full Remote-SSH IDE.
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![VS Code](https://img.shields.io/badge/VS%20Code-%5E1.90-007ACC.svg?logo=visualstudiocode)](https://code.visualstudio.com/)
+[![VS Code](https://img.shields.io/badge/VS%20Code-%5E1.101-007ACC.svg?logo=visualstudiocode)](https://code.visualstudio.com/)
 [![Cursor](https://img.shields.io/badge/Cursor-supported-4B0082.svg)](https://cursor.com)
 [![Node](https://img.shields.io/badge/Node-%E2%89%A522-339933.svg?logo=nodedotjs)](https://nodejs.org/)
 [![pnpm](https://img.shields.io/badge/pnpm-10-F69220.svg?logo=pnpm)](https://pnpm.io/)
@@ -45,7 +45,7 @@ embedded web UI, remote kernels, file browsing, and Remote-SSH.
 
 ## Getting started (development)
 
-Requirements: Node.js ≥ 22, pnpm 10 (`corepack enable`), VS Code ≥ 1.90 / Cursor, and a local
+Requirements: Node.js ≥ 22, pnpm 10 (`corepack enable`), VS Code ≥ 1.101 / a Cursor build with Node.js 22 in its extension host, and a local
 Chrome/Chromium/Edge for the sign-in flow.
 
 ```bash

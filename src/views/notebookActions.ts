@@ -20,10 +20,12 @@ export function buildNotebookActions(nb: NotebookHandlerResponse, isFavorite: bo
   const p = presentNotebookStatus(nb.status);
   const access = nb.accessGranted !== false;
   const isDeleted = nb.status === "deleted";
+  const hasUrl = Boolean(nb.url);
   const transition = "Недоступно: идёт смена статуса";
   // Running is a precondition of everything below; a transient status gets its own reason instead of
   // the misleading "ноутбук не запущен".
   const notRunning = p.isBusy ? transition : "Недоступно: ноутбук не запущен";
+  const notConnectable = p.isRunning && !hasUrl ? "Недоступно: URL ноутбука ещё не получен" : notRunning;
 
   const gate = (
     label: string,
@@ -38,29 +40,29 @@ export function buildNotebookActions(nb: NotebookHandlerResponse, isFavorite: bo
       "Открыть в VS Code",
       "Веб-интерфейс ноутбука во вкладке редактора",
       "cloudru.openNotebook",
-      p.isRunning && access,
-      !access ? NO_ACCESS : notRunning,
+      p.isRunning && hasUrl && access,
+      !access ? NO_ACCESS : notConnectable,
     ),
     gate(
       "Открыть в браузере",
       "Jupyter или JupyterLab в новой вкладке",
       "cloudru.openNotebookInBrowser",
-      p.isRunning,
-      notRunning,
+      p.isRunning && hasUrl && access,
+      !access ? NO_ACCESS : notConnectable,
     ),
     gate(
       "Запустить",
       "Включить остановленный сервер (счёт за ресурсы возобновится)",
       "cloudru.resumeNotebook",
-      p.isPaused,
-      p.isBusy ? transition : "Недоступно: ноутбук не на паузе",
+      p.isPaused && access,
+      !access ? NO_ACCESS : p.isBusy ? transition : "Недоступно: ноутбук не на паузе",
     ),
     gate(
       "Остановить",
       "Несохранённые данные вне NFS будут утеряны",
       "cloudru.pauseNotebook",
-      p.isRunning,
-      p.isBusy ? transition : "Недоступно: ноутбук не запущен",
+      p.isRunning && access,
+      !access ? NO_ACCESS : p.isBusy ? transition : "Недоступно: ноутбук не запущен",
     ),
     gate(
       "Изменить описание…",
@@ -91,15 +93,15 @@ export function buildNotebookActions(nb: NotebookHandlerResponse, isFavorite: bo
       "Файлы по SSH",
       "Открыть домашнюю папку ноутбука через SFTP",
       "cloudru.openNotebookFiles",
-      p.isRunning && access,
-      !access ? NO_ACCESS : notRunning,
+      p.isRunning && hasUrl && access,
+      !access ? NO_ACCESS : notConnectable,
     ),
     gate(
       "Полный IDE (Remote-SSH)",
       "Удалённое окно разработки (терминал + IntelliSense)",
       "cloudru.openFullIde",
-      p.isRunning && access,
-      !access ? NO_ACCESS : notRunning,
+      p.isRunning && hasUrl && access,
+      !access ? NO_ACCESS : notConnectable,
     ),
   ];
 
@@ -107,8 +109,8 @@ export function buildNotebookActions(nb: NotebookHandlerResponse, isFavorite: bo
   if (nb.region !== DGX2_REGION) {
     actions.push(
       gate(
-        "Открыть мониторинг в консоли",
-        "Страница мониторинга в веб-консоли",
+        "Открыть консоль (мониторинг)",
+        "Найдите мониторинг этого сервера в консоли",
         "cloudru.openMonitoring",
         p.isRunning || p.isPaused,
         "Недоступно для этого статуса",
@@ -121,8 +123,8 @@ export function buildNotebookActions(nb: NotebookHandlerResponse, isFavorite: bo
       "Удалить…",
       "Удалить сервер без возможности восстановления",
       "cloudru.deleteNotebook",
-      !p.isBusy && !isDeleted,
-      "Недоступно: операция уже выполняется",
+      !p.isBusy && !isDeleted && access,
+      !access ? NO_ACCESS : "Недоступно: операция уже выполняется",
     ),
     isFavorite
       ? { label: "Убрать из избранного", description: "", command: "cloudru.removeFavorite" }

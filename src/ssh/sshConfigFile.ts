@@ -33,7 +33,7 @@ export function formatHostStanza(alias: string, entry: SshHostEntry, knownHostsF
     `  IdentitiesOnly yes`,
     `  HostKeyAlgorithms +ssh-rsa`,
     `  PubkeyAcceptedAlgorithms +ssh-rsa`,
-    `  StrictHostKeyChecking accept-new`,
+    `  StrictHostKeyChecking yes`,
     `  UserKnownHostsFile "${knownHostsFile}"`,
   ].join("\n");
 }

@@ -57,6 +57,8 @@ export interface ConsoleApiClientOptions {
   logger?: { info(message: string): void; warn?(message: string): void };
   /** Per-request timeout in ms (defaults to consoleHttp's DEFAULT_HTTP_TIMEOUT_MS). Shrinkable in tests. */
   timeoutMs?: number;
+  /** Called once a request still returns 401 after forced token refresh. */
+  onAuthFailure?: () => Promise<void>;
 }
 
 export class ConsoleApiClient {
@@ -65,9 +67,15 @@ export class ConsoleApiClient {
   private readonly fetchImpl: HttpFetch;
   private readonly logger: { info(message: string): void; warn?(message: string): void } | undefined;
   private readonly timeoutMs: number | undefined;
+  private readonly onAuthFailure: (() => Promise<void>) | undefined;
   /** In-flight listNotebooks calls keyed by workspaceId, so the tree, kernel provider and poller share
    * one request instead of racing three concurrent silent mints. */
   private readonly inFlightList = new Map<string, Promise<NotebookHandlerResponse[]>>();
+
+  /** Prevent a new auth/workspace context from joining an older list request. */
+  invalidateContext(): void {
+    this.inFlightList.clear();
+  }
 
   constructor(opts: ConsoleApiClientOptions) {
     this.baseUrl = opts.baseUrl.replace(/\/+$/, "");
@@ -75,30 +83,37 @@ export class ConsoleApiClient {
     this.fetchImpl = opts.fetchImpl ?? consoleFetch;
     this.logger = opts.logger;
     this.timeoutMs = opts.timeoutMs;
+    this.onAuthFailure = opts.onAuthFailure;
   }
 
   /** All workspaces the signed-in user belongs to. Bootstrap call — no x-workspace-id. */
   async listWorkspaces(): Promise<ConsoleWorkspace[]> {
-    const res = await this.send<ConsoleWorkspace[]>("GET", `${this.baseUrl}/user/v1/workspaces/`, {});
-    return Array.isArray(res) ? res : [];
+    const res = await this.send<unknown>("GET", `${this.baseUrl}/user/v1/workspaces/`, {});
+    if (!Array.isArray(res) || !res.every((ws) => ws && typeof ws.workspace_id === "string" && typeof ws.workspace_name === "string")) {
+      throw new ApiError("unknown", "Cloud.ru returned an invalid workspace list");
+    }
+    return res as ConsoleWorkspace[];
   }
 
-  async listNotebooks(ws: WorkspaceContext): Promise<NotebookHandlerResponse[]> {
+  async listNotebooks(ws: WorkspaceContext, signal?: AbortSignal): Promise<NotebookHandlerResponse[]> {
     const existing = this.inFlightList.get(ws.workspaceId);
-    if (existing) return existing;
-    const request = this.send<ConsoleNotebooksResponse>(
+    if (existing) return signal ? waitForSubscriber(existing, signal) : existing;
+    const request = this.send<unknown>(
       "GET",
       `${this.baseUrl}/notebooks/v2/?include_private=true`,
       { workspaceId: ws.workspaceId },
     )
-      .then((res) =>
-        (res.notebooks ?? []).map((n) =>
+      .then((res) => {
+        if (!isNotebookList(res)) throw new ApiError("unknown", "Cloud.ru returned an invalid notebook list");
+        return res.notebooks.map((n) =>
           mapConsoleNotebook(n, (raw) => this.logger?.warn?.(`[status] unrecognized notebook status "${raw}" → unknown`)),
-        ),
-      )
-      .finally(() => this.inFlightList.delete(ws.workspaceId));
+        );
+      })
+      .finally(() => {
+        if (this.inFlightList.get(ws.workspaceId) === request) this.inFlightList.delete(ws.workspaceId);
+      });
     this.inFlightList.set(ws.workspaceId, request);
-    return request;
+    return signal ? waitForSubscriber(request, signal) : request;
   }
 
   async pauseNotebook(ws: WorkspaceContext, uid: string): Promise<void> {
@@ -212,6 +227,7 @@ export class ConsoleApiClient {
     if (response.status === 401) {
       response = await this.dispatch("GET", url, { workspaceId: ws.workspaceId }, true);
     }
+    if (response.status === 401) await this.onAuthFailure?.();
     if (!response.ok) {
       throw apiErrorFromResponse(response.status, await response.text(), response.headers.get("retry-after"));
     }
@@ -279,12 +295,14 @@ export class ConsoleApiClient {
     if (response.status === 401) {
       response = await this.dispatch(method, url, opts, true);
     }
+    if (response.status === 401) await this.onAuthFailure?.();
 
     const raw = await response.text();
     const parsed = raw ? safeJsonParse(raw) : undefined;
     if (!response.ok) {
       throw apiErrorFromResponse(response.status, parsed ?? raw, response.headers.get("retry-after"));
     }
+    if (raw && parsed === undefined) throw new ApiError("unknown", "Cloud.ru returned invalid JSON");
     return parsed as T;
   }
 
@@ -322,6 +340,28 @@ export class ConsoleApiClient {
       throw new ApiError("network", `Network error contacting the Cloud.ru console: ${String(detail)}`);
     }
   }
+}
+
+function waitForSubscriber<T>(request: Promise<T>, signal: AbortSignal): Promise<T> {
+  const abortError = () => Object.assign(new Error("Cloud.ru API request cancelled"), { name: "AbortError" });
+  if (signal.aborted) return Promise.reject(abortError());
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => { signal.removeEventListener("abort", onAbort); reject(abortError()); };
+    signal.addEventListener("abort", onAbort, { once: true });
+    request.then(
+      (result) => { signal.removeEventListener("abort", onAbort); resolve(result); },
+      (error) => { signal.removeEventListener("abort", onAbort); reject(error); },
+    );
+    if (signal.aborted) onAbort();
+  });
+}
+
+function isNotebookList(value: unknown): value is ConsoleNotebooksResponse {
+  if (!value || typeof value !== "object" || !("notebooks" in value)) return false;
+  const list = value.notebooks;
+  return Array.isArray(list) && list.every((nb) =>
+    nb && typeof nb.uid === "string" && typeof nb.name === "string" &&
+    typeof nb.status === "string" && typeof nb.region === "string");
 }
 
 function safeJsonParse(text: string): unknown {

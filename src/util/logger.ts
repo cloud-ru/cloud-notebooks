@@ -21,6 +21,10 @@ export class Logger {
     this.write("ERROR", detail ? `${message} :: ${detail}` : message);
   }
 
+  show(): void {
+    this.channel.show(true);
+  }
+
   private write(level: string, message: string): void {
     this.channel.appendLine(`${new Date().toISOString()} [${level}] ${scrubSecrets(message)}`);
   }
@@ -33,6 +37,9 @@ export class Logger {
 /** Best-effort redaction so tokens/keys never land in the log. */
 export function scrubSecrets(text: string): string {
   return text
+    .replace(/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/gi, "<private key redacted>")
     .replace(/(Bearer\s+)[A-Za-z0-9._-]+/gi, "$1<redacted>")
-    .replace(/("?(?:client_secret|x-api-key|access_token|Cookie)"?\s*[:=]\s*)("?)[^",}\s]+\2/gi, "$1$2<redacted>$2");
+    .replace(/([?&](?:access_token|refresh_token|token|client_secret|code|session|password|x-api-key)=)[^&#\s]+/gi, "$1<redacted>")
+    .replace(/(\b(?:Authorization|Cookie|Set-Cookie)\s*[:=]\s*)[^\r\n]+/gi, "$1<redacted>")
+    .replace(/("?(?:client_secret|x-api-key|access_token|refresh_token|password)"?\s*[:=]\s*)("?)[^",}\s]+\2/gi, "$1$2<redacted>$2");
 }

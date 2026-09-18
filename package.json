@@ -7,7 +7,7 @@
   "license": "Apache-2.0",
   "packageManager": "pnpm@10.22.0",
   "engines": {
-    "vscode": "^1.90.0"
+    "vscode": "^1.101.0"
   },
   "categories": [
     "Data Science",
@@ -79,8 +79,18 @@
       },
       {
         "view": "cloudruNotebooks",
+        "contents": "Загружаем ноутбуки…",
+        "when": "cloudru.authenticated && cloudru.workspaceSelected && cloudru.loading"
+      },
+      {
+        "view": "cloudruNotebooks",
+        "contents": "Ничего не найдено по текущему фильтру.\n[Сбросить фильтры](command:cloudru.clearFilters)",
+        "when": "cloudru.authenticated && cloudru.workspaceSelected && cloudru.filteredEmpty"
+      },
+      {
+        "view": "cloudruNotebooks",
         "contents": "В выбранном воркспейсе нет ноутбуков.\n[Создать в консоли](command:cloudru.createNotebookInConsole)\n[Обновить](command:cloudru.refreshNotebooks)",
-        "when": "cloudru.authenticated && cloudru.workspaceSelected && !cloudru.loadError"
+        "when": "cloudru.authenticated && cloudru.workspaceSelected && !cloudru.loadError && !cloudru.loading && !cloudru.hasFilter"
       }
     ],
     "commands": [
@@ -114,10 +124,10 @@
       { "command": "cloudru.downloadLogs", "title": "Скачать логи…", "category": "Cloud.ru" },
       { "command": "cloudru.editDescription", "title": "Изменить описание…", "category": "Cloud.ru" },
       { "command": "cloudru.deleteNotebook", "title": "Удалить…", "category": "Cloud.ru" },
-      { "command": "cloudru.openMonitoring", "title": "Открыть мониторинг в консоли", "category": "Cloud.ru" },
+      { "command": "cloudru.openMonitoring", "title": "Открыть консоль (мониторинг)", "category": "Cloud.ru" },
       {
         "command": "cloudru.createNotebookInConsole",
-        "title": "Создать Jupyter Server в консоли…",
+        "title": "Открыть консоль для создания Jupyter Server…",
         "category": "Cloud.ru"
       },
       { "command": "cloudru.notebookActions", "title": "Действия с ноутбуком…", "category": "Cloud.ru" },
@@ -198,57 +208,57 @@
       "cloudru.notebookActionsMenu": [
         {
           "command": "cloudru.openNotebook",
-          "when": "view == cloudruNotebooks && viewItem =~ /^notebook\\.running/",
+          "when": "view == cloudruNotebooks && viewItem =~ /^notebook\\.running/ && !(viewItem =~ /\\.denied/) && !(viewItem =~ /\\.noUrl/)",
           "group": "1_open@1"
         },
         {
           "command": "cloudru.openNotebookInBrowser",
-          "when": "view == cloudruNotebooks && viewItem =~ /^notebook\\.running/",
+          "when": "view == cloudruNotebooks && viewItem =~ /^notebook\\.running/ && !(viewItem =~ /\\.denied/) && !(viewItem =~ /\\.noUrl/)",
           "group": "1_open@2"
         },
         {
           "command": "cloudru.resumeNotebook",
-          "when": "view == cloudruNotebooks && viewItem =~ /^notebook\\.paused/",
+          "when": "view == cloudruNotebooks && viewItem =~ /^notebook\\.paused/ && !(viewItem =~ /\\.denied/)",
           "group": "2_lifecycle@1"
         },
         {
           "command": "cloudru.pauseNotebook",
-          "when": "view == cloudruNotebooks && viewItem =~ /^notebook\\.running/",
+          "when": "view == cloudruNotebooks && viewItem =~ /^notebook\\.running/ && !(viewItem =~ /\\.denied/)",
           "group": "2_lifecycle@2"
         },
         {
           "command": "cloudru.deleteNotebook",
-          "when": "view == cloudruNotebooks && (viewItem =~ /^notebook\\.running/ || viewItem =~ /^notebook\\.paused/ || viewItem =~ /^notebook\\.other/)",
+          "when": "view == cloudruNotebooks && (viewItem =~ /^notebook\\.running/ || viewItem =~ /^notebook\\.paused/ || viewItem =~ /^notebook\\.other/) && !(viewItem =~ /\\.denied/) && !(viewItem =~ /\\.deleted/)",
           "group": "2_lifecycle@3"
         },
         {
           "command": "cloudru.openNotebookFiles",
-          "when": "view == cloudruNotebooks && viewItem =~ /^notebook\\.running/",
+          "when": "view == cloudruNotebooks && viewItem =~ /^notebook\\.running/ && !(viewItem =~ /\\.denied/) && !(viewItem =~ /\\.noUrl/)",
           "group": "3_ssh@1"
         },
         {
           "command": "cloudru.openFullIde",
-          "when": "view == cloudruNotebooks && viewItem =~ /^notebook\\.running/",
+          "when": "view == cloudruNotebooks && viewItem =~ /^notebook\\.running/ && !(viewItem =~ /\\.denied/) && !(viewItem =~ /\\.noUrl/)",
           "group": "3_ssh@2"
         },
         {
           "command": "cloudru.showLogs",
-          "when": "view == cloudruNotebooks && (viewItem =~ /^notebook\\.running/ || viewItem =~ /^notebook\\.other/)",
+          "when": "view == cloudruNotebooks && (viewItem =~ /^notebook\\.running/ || viewItem =~ /^notebook\\.other/) && !(viewItem =~ /\\.denied/) && !(viewItem =~ /\\.deleted/)",
           "group": "4_diag@1"
         },
         {
           "command": "cloudru.downloadLogs",
-          "when": "view == cloudruNotebooks && (viewItem =~ /^notebook\\.running/ || viewItem =~ /^notebook\\.other/)",
+          "when": "view == cloudruNotebooks && (viewItem =~ /^notebook\\.running/ || viewItem =~ /^notebook\\.other/) && !(viewItem =~ /\\.denied/) && !(viewItem =~ /\\.deleted/)",
           "group": "4_diag@2"
         },
         {
           "command": "cloudru.openMonitoring",
-          "when": "view == cloudruNotebooks && (viewItem =~ /^notebook\\.running/ || viewItem =~ /^notebook\\.paused/)",
+          "when": "view == cloudruNotebooks && (viewItem =~ /^notebook\\.running/ || viewItem =~ /^notebook\\.paused/) && !(viewItem =~ /\\.dgx2/)",
           "group": "4_diag@3"
         },
         {
           "command": "cloudru.editDescription",
-          "when": "view == cloudruNotebooks && (viewItem =~ /^notebook\\.running/ || viewItem =~ /^notebook\\.paused/ || viewItem =~ /^notebook\\.other/)",
+          "when": "view == cloudruNotebooks && (viewItem =~ /^notebook\\.running/ || viewItem =~ /^notebook\\.paused/ || viewItem =~ /^notebook\\.other/) && !(viewItem =~ /\\.denied/) && !(viewItem =~ /\\.deleted/)",
           "group": "6_meta@1"
         },
         {

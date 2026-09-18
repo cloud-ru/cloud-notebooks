@@ -99,7 +99,7 @@ describe("presentNotebookStatus", () => {
 describe("statusLabel", () => {
   // Exact Russian labels from src/util/notebookStatus.ts, one row per status.
   const LABELS = [
-    ["running", "Подключен"],
+    ["running", "Запущен"],
     ["paused", "На паузе"],
     ["paused_by_schedule", "Остановлен по расписанию"],
     ["paused_by_metrics", "Остановлен по нагрузке"],

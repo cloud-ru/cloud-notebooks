@@ -7,6 +7,7 @@ function nb(p: Partial<NotebookHandlerResponse>): NotebookHandlerResponse {
     uid: "u",
     name: "nb",
     status: "running",
+    url: "https://notebook.example/",
     image: "cr.ai.cloud.ru/img/base:1.2",
     imageDisplayName: "Base",
     region: "a100-mt",
@@ -23,7 +24,7 @@ function find(actions: NotebookAction[], label: string): NotebookAction | undefi
 
 // Exact reason string from the source; a disabled action must both drop its command AND surface this.
 const NO_ACCESS = "Нет доступа: индивидуальный Jupyter Server другого пользователя";
-const MONITORING = "Открыть мониторинг в консоли";
+const MONITORING = "Открыть консоль (мониторинг)";
 const DELETE = "Удалить…";
 
 describe("buildNotebookActions", () => {
@@ -77,6 +78,15 @@ describe("buildNotebookActions", () => {
         expect(a?.description).toBe(NO_ACCESS);
       },
     );
+    it.each(["Остановить", "Удалить…", "Открыть в браузере"])("does not expose %s", (label) => {
+      expect(find(actions, label)?.command).toBeUndefined();
+    });
+  });
+
+  it("does not offer connection actions before the running URL arrives", () => {
+    const actions = buildNotebookActions(nb({ status: "running", url: undefined }), false);
+    expect(find(actions, "Открыть в VS Code")?.command).toBeUndefined();
+    expect(find(actions, "Файлы по SSH")?.description).toContain("URL");
   });
 
   describe("transient (busy) statuses use the transition reason, not 'not running'", () => {

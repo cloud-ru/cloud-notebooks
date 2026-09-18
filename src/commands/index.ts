@@ -10,7 +10,7 @@ import { buildResumeBody, splitImageRef, type ResumeBody } from "../console/resu
 import { pollNotebookStatus, type PollOutcome } from "../console/pollLoop";
 import type { SessionStore } from "../session/sessionStore";
 import type { Logger } from "../util/logger";
-import type { NotebookTreeItem, NotebooksTreeProvider } from "../views/notebooksTree";
+import { NotebookTreeItem, type NotebooksTreeProvider } from "../views/notebooksTree";
 import { buildNotebookActions } from "../views/notebookActions";
 import type { NotebookViewController } from "../jupyter/notebookController";
 import type { CloudruServerProvider } from "../jupyter/serverProvider";
@@ -32,14 +32,60 @@ export interface CommandDeps {
 
 export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
   const { auth, client, session, tree, notebooks, serverProvider, ssh, logger } = deps;
+  const activeOperations = new Set<string>();
+  const retryableReads: Record<string, true> = {
+    "cloudru.selectWorkspace": true, "cloudru.showLogs": true, "cloudru.downloadLogs": true,
+  };
+  const itemCommands: Record<string, true> = {
+    "cloudru.openNotebook": true, "cloudru.openNotebookInBrowser": true, "cloudru.resumeNotebook": true, "cloudru.pauseNotebook": true,
+    "cloudru.openNotebookFiles": true, "cloudru.openFullIde": true, "cloudru.showLogs": true, "cloudru.downloadLogs": true,
+    "cloudru.editDescription": true, "cloudru.deleteNotebook": true,
+    "cloudru.addFavorite": true, "cloudru.removeFavorite": true, "cloudru.notebookActions": true,
+  };
 
   const run = (id: string, body: (...args: unknown[]) => Promise<void>): vscode.Disposable =>
-    vscode.commands.registerCommand(id, (...args: unknown[]) => withErrorHandling(auth, logger, body, ...args));
+    vscode.commands.registerCommand(id, (...args: unknown[]) => {
+      const item = args[0] instanceof NotebookTreeItem ? args[0] : undefined;
+      if (id in itemCommands && !item) {
+        void vscode.window.showWarningMessage("Выберите ноутбук в списке Cloud.ru и повторите действие.");
+        return;
+      }
+      if (item && item.contextGeneration !== session.getGeneration()) {
+        void vscode.window.showWarningMessage("Список относится к прежнему воркспейсу. Обновите его и повторите действие.");
+        return;
+      }
+      if (item && id !== "cloudru.notebookActions") {
+        const action = buildNotebookActions(item.notebook, tree.isFavorite(item.notebook.uid))
+          .find((candidate) => candidate.command === id);
+        if (!action) {
+          void vscode.window.showWarningMessage(`Действие сейчас недоступно для «${item.notebook.name}». Обновите список и проверьте статус и права.`);
+          return;
+        }
+      }
+      return withErrorHandling(auth, logger, id in retryableReads, body, ...args);
+    });
+
+  const withNotebookOperation = async (item: NotebookTreeItem, work: () => Promise<void>): Promise<void> => {
+    const ws = session.get();
+    if (!ws || item.contextGeneration !== session.getGeneration()) return;
+    const key = JSON.stringify([item.contextGeneration, ws.workspaceId, item.notebook.uid]);
+    if (activeOperations.has(key)) {
+      void vscode.window.showInformationMessage(`Операция с «${item.notebook.name}» уже выполняется.`);
+      return;
+    }
+    activeOperations.add(key);
+    try {
+      await work();
+    } finally {
+      activeOperations.delete(key);
+    }
+  };
 
   // After a lifecycle transition the pod is recreated, so any cached SSH tunnel / shim for it is dead.
   const invalidateTunnels = (uid: string): void => {
     notebooks.invalidate(uid);
     serverProvider.invalidate(uid);
+    ssh.invalidate(uid);
   };
 
   return [
@@ -48,7 +94,7 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
       if (!ok) return;
       if (!session.get()) await selectWorkspace(client, session, logger);
       const ws = session.get();
-      if (ws) void refreshPreflightWarning(client, ws, tree);
+      if (ws) void refreshPreflightWarning(client, ws, tree, session.getGeneration());
       tree.refresh();
     }),
 
@@ -66,12 +112,14 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
       }
       await selectWorkspace(client, session, logger);
       const ws = session.get();
-      if (ws) void refreshPreflightWarning(client, ws, tree);
+      if (ws) void refreshPreflightWarning(client, ws, tree, session.getGeneration());
       tree.refresh();
     }),
 
     run("cloudru.refreshNotebooks", async () => {
       tree.refresh();
+      const ws = session.get();
+      if (ws) void refreshPreflightWarning(client, ws, tree, session.getGeneration());
     }),
 
     run("cloudru.statusBarMenu", async () => {
@@ -92,6 +140,7 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
       const query = await vscode.window.showInputBox({
         title: "Поиск ноутбуков по имени",
         prompt: "Введите часть имени ноутбука (пусто — сбросить).",
+        value: tree.currentSearch(),
         ignoreFocusOut: true,
       });
       if (query === undefined) return; // cancelled — keep current filter
@@ -183,25 +232,38 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
       const item = args[0] as NotebookTreeItem | undefined;
       const ws = session.get();
       if (!item || !ws) return;
-      const { name, uid } = item.notebook;
-      await client.pauseNotebook(ws, uid);
-      const outcome = await pollUntil(client, ws, uid, tree, {
-        title: `Остановка «${name}»…`,
-        timeoutMs: 120_000,
-        isComplete: (nb) => nb?.status.startsWith("paused") ?? false,
-        isFailed: (nb) => nb?.status === "error",
-        timeoutMessage: `«${name}»: остановка занимает дольше обычного — обновите список позже.`,
+      await withNotebookOperation(item, async () => {
+        const { name, uid } = item.notebook;
+        const CONFIRM = "Остановить";
+        const choice = await vscode.window.showWarningMessage(
+          `Остановить «${name}»? Несохранённые данные вне NFS будут потеряны.`,
+          { modal: true }, CONFIRM,
+        );
+        if (choice !== CONFIRM || item.contextGeneration !== session.getGeneration()) return;
+        const submitted = await submitAndObserve(
+          () => client.pauseNotebook(ws, uid),
+          () => client.listNotebooks(ws),
+          (nb) => nb?.status.startsWith("paused") ?? false,
+          uid, item.contextGeneration, tree,
+        );
+        if (!submitted) return;
+        const outcome = await pollUntil(client, ws, uid, tree, {
+          title: `Ожидание остановки «${name}»…`,
+          timeoutMs: 120_000,
+          isComplete: (nb) => nb?.status.startsWith("paused") ?? false,
+          isFailed: (nb) => nb?.status === "error" || nb?.status === "rejected",
+          timeoutMessage: `«${name}»: остановка занимает дольше обычного — обновите список позже.`,
+        }, item.contextGeneration);
+        if (outcome.kind === "done") invalidateTunnels(uid);
+        if (outcome.kind === "failed") void vscode.window.showErrorMessage(`Не удалось остановить «${name}».`);
       });
-      invalidateTunnels(uid);
-      if (outcome.kind === "failed") {
-        void vscode.window.showErrorMessage(`Не удалось остановить «${name}».`);
-      }
     }),
 
     run("cloudru.resumeNotebook", async (...args: unknown[]) => {
       const item = args[0] as NotebookTreeItem | undefined;
       const ws = session.get();
       if (!item || !ws) return;
+      await withNotebookOperation(item, async () => {
       const { name, uid } = item.notebook;
       // The resume endpoint is keyed by the workspace's k8s namespace. Prefer the workspace
       // namespace (reliably returned by /user/v1/workspaces/); the per-notebook namespace is a
@@ -219,20 +281,30 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
         );
         return;
       }
-      await client.resumeNotebook(ws, namespace, await resolveResumeBody(client, ws, item.notebook));
+      if (item.contextGeneration !== session.getGeneration()) return;
+      const body = await resolveResumeBody(client, ws, item.notebook);
+      if (item.contextGeneration !== session.getGeneration()) return;
+      const submitted = await submitAndObserve(
+        () => client.resumeNotebook(ws, namespace, body),
+        () => client.listNotebooks(ws),
+        (nb) => nb?.status === "running",
+        uid, item.contextGeneration, tree,
+      );
+      if (!submitted) return;
       const outcome = await pollUntil(client, ws, uid, tree, {
-        title: `Запуск «${name}»…`,
+        title: `Ожидание запуска «${name}»…`,
         timeoutMs: 300_000,
         isComplete: (nb) => nb?.status === "running",
         isFailed: (nb) => nb?.status === "error" || nb?.status === "rejected",
         timeoutMessage: `«${name}»: запуск занимает дольше обычного — обновите список позже.`,
-      });
-      invalidateTunnels(uid);
+      }, item.contextGeneration);
+      if (outcome.kind === "done") invalidateTunnels(uid);
       if (outcome.kind === "failed") {
         const LOGS = "Показать логи";
         const choice = await vscode.window.showErrorMessage(`Не удалось запустить «${name}».`, LOGS);
         if (choice === LOGS) await showNotebookLogs(client, ws, item.notebook);
       }
+      });
     }),
 
     run("cloudru.configureSsh", async () => {
@@ -248,19 +320,22 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
       }
       const TREE = "Открыть Jupyter (tree)";
       const LAB = "Открыть JupyterLab";
+      const APP = "Открыть приложение";
       const choice = await vscode.window.showQuickPick(
         [
+          { label: APP, description: "Адрес приложения без Jupyter-маршрута" },
           { label: TREE, description: "Классический интерфейс Jupyter" },
           { label: LAB, description: "JupyterLab" },
         ],
         { title: `Открыть «${item.notebook.name}» в браузере`, ignoreFocusOut: true },
       );
       if (!choice) return;
+      if (item.contextGeneration !== session.getGeneration()) return;
       const ws = session.get();
       const base = url.endsWith("/") ? url : `${url}/`;
-      const page = choice.label === LAB ? "lab" : "tree";
-      const suffix = ws ? `?ws=${encodeURIComponent(ws.workspaceId)}` : "";
-      await vscode.env.openExternal(vscode.Uri.parse(`${base}${page}/${suffix}`));
+      const page = choice.label === LAB ? "lab/" : choice.label === TREE ? "tree/" : "";
+      const suffix = choice.label !== APP && ws ? `?ws=${encodeURIComponent(ws.workspaceId)}` : "";
+      await vscode.env.openExternal(vscode.Uri.parse(`${base}${page}${suffix}`));
     }),
 
     run("cloudru.showLogs", async (...args: unknown[]) => {
@@ -281,13 +356,18 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
       const item = args[0] as NotebookTreeItem | undefined;
       const ws = session.get();
       if (!item || !ws) return;
-      await editNotebookDescription(client, ws, item.notebook, () => tree.refresh());
+      await editNotebookDescription(
+        client, ws, item.notebook,
+        () => item.contextGeneration === session.getGeneration(),
+        () => tree.refresh(),
+      );
     }),
 
     run("cloudru.deleteNotebook", async (...args: unknown[]) => {
       const item = args[0] as NotebookTreeItem | undefined;
       const ws = session.get();
       if (!item || !ws) return;
+      await withNotebookOperation(item, async () => {
       const { name, uid } = item.notebook;
       const CONFIRM = "Удалить";
       const choice = await vscode.window.showWarningMessage(
@@ -296,13 +376,25 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
         CONFIRM,
       );
       if (choice !== CONFIRM) return;
-      await client.deleteNotebook(ws, uid);
-      invalidateTunnels(uid);
-      await pollUntil(client, ws, uid, tree, {
-        title: `Удаление «${name}»…`,
+      if (item.contextGeneration !== session.getGeneration()) return;
+      const submitted = await submitAndObserve(
+        () => client.deleteNotebook(ws, uid),
+        () => client.listNotebooks(ws),
+        (nb) => nb === undefined || nb.status === "deleted",
+        uid, item.contextGeneration, tree,
+      );
+      if (!submitted) return;
+      const outcome = await pollUntil(client, ws, uid, tree, {
+        title: `Ожидание удаления «${name}»…`,
         timeoutMs: 120_000,
         isComplete: (nb) => nb === undefined || nb.status === "deleted",
+        isFailed: (nb) => nb?.status === "error" || nb?.status === "rejected",
         timeoutMessage: `«${name}»: удаление занимает дольше обычного — обновите список позже.`,
+      }, item.contextGeneration);
+      if (outcome.kind === "done") invalidateTunnels(uid);
+      if (outcome.kind === "failed") {
+        void vscode.window.showErrorMessage(`Не удалось удалить «${name}» — проверьте статус ноутбука в списке.`);
+      }
       });
     }),
 
@@ -343,9 +435,16 @@ async function selectWorkspace(client: ConsoleApiClient, session: SessionStore, 
       () => client.listWorkspaces(),
     );
   } catch (err) {
-    if (err instanceof NotSignedInError) throw err; // expired session → single re-auth path, no manual id
+    if (err instanceof NotSignedInError || (err instanceof ApiError && err.isAuth)) throw err;
     logger.error("Failed to load Cloud.ru workspaces", err);
-    await enterWorkspaceIdManually(session, err);
+    const RETRY = "Повторить загрузку";
+    const MANUAL = "Ввести ID вручную";
+    const choice = await vscode.window.showErrorMessage(
+      `Не удалось загрузить воркспейсы Cloud.ru: ${errorMessage(err)}`,
+      RETRY, MANUAL,
+    );
+    if (choice === RETRY) await selectWorkspace(client, session, logger);
+    else if (choice === MANUAL) await enterWorkspaceIdManually(session, err);
     return;
   }
   if (workspaces.length === 0) {
@@ -398,8 +497,8 @@ async function enterWorkspaceIdManually(session: SessionStore, cause?: unknown):
 
 /**
  * Build the resume body, looking up harbor image labels via docker_images the way the web app does
- * (2.4). Artifact-registry images need no lookup; any lookup failure falls back to empty labels so a
- * transient error never blocks a resume.
+ * (2.4). Artifact-registry images need no lookup; lookup failures propagate so a resume is never
+ * sent with silently empty labels — the command's error handling shows the cause to the user.
  */
 async function resolveResumeBody(
   client: ConsoleApiClient,
@@ -408,12 +507,8 @@ async function resolveResumeBody(
 ): Promise<ResumeBody> {
   if (notebook.imageSource === "artifact_registry") return buildResumeBody(notebook);
   const { name, tag } = splitImageRef(notebook.image || "");
-  try {
-    const resolved = await client.findResumeImage(ws, { region: notebook.region, imageName: name, tag });
-    return buildResumeBody(notebook, resolved);
-  } catch {
-    return buildResumeBody(notebook);
-  }
+  const resolved = await client.findResumeImage(ws, { region: notebook.region, imageName: name, tag });
+  return buildResumeBody(notebook, resolved);
 }
 
 /** Base console URL for "open in console" actions (create / monitoring). */
@@ -507,6 +602,7 @@ async function editNotebookDescription(
   client: ConsoleApiClient,
   ws: WorkspaceContext,
   notebook: NotebookHandlerResponse,
+  isCurrent: () => boolean,
   refresh: () => void,
 ): Promise<void> {
   const description = await vscode.window.showInputBox({
@@ -517,18 +613,21 @@ async function editNotebookDescription(
     validateInput: (v) =>
       v.length > MAX_DESCRIPTION_LENGTH ? `Максимум ${MAX_DESCRIPTION_LENGTH} символов` : undefined,
   });
-  if (description === undefined) return;
+  if (description === undefined || !isCurrent()) return;
+  const latest = (await client.listNotebooks(ws)).find((item) => item.uid === notebook.uid);
+  if (!isCurrent()) return;
+  if (!latest) throw new ApiError("notFound", `Ноутбук «${notebook.name}» больше не найден в воркспейсе.`);
   await client.modifyNotebook(ws, notebook.uid, {
     description,
-    ...(notebook.s3Buckets
+    ...(latest.s3Buckets
       ? {
-          s3_buckets: notebook.s3Buckets.map((b) => ({
+          s3_buckets: latest.s3Buckets.map((b) => ({
             bucket_name: b.name,
             ...(b.accessRule !== undefined ? { access_rule: b.accessRule } : {}),
           })),
         }
       : {}),
-    autoshutdown_config: notebook.autoshutdownConfig ?? null,
+    ...(latest.autoshutdownConfig !== undefined ? { autoshutdown_config: latest.autoshutdownConfig } : {}),
   });
   refresh();
 }
@@ -549,11 +648,7 @@ function extOf(fileName: string): string {
 
 /** Project preflight; treats any failure as active so a flaky preflight never blocks the user. */
 async function isProjectActive(client: ConsoleApiClient, ws: WorkspaceContext): Promise<boolean> {
-  try {
-    return (await client.getProjectStatus(ws)).access;
-  } catch {
-    return true;
-  }
+  return (await client.getProjectStatus(ws)).access;
 }
 
 /** Refresh the tree's preflight warning line for the current workspace. */
@@ -561,11 +656,17 @@ async function refreshPreflightWarning(
   client: ConsoleApiClient,
   ws: WorkspaceContext,
   tree: NotebooksTreeProvider,
+  generation: number,
 ): Promise<void> {
-  const active = await isProjectActive(client, ws);
-  tree.setPreflightWarning(
-    active ? undefined : "Проект приостановлен: не хватает средств или прав для создания и подключения Jupyter Server.",
-  );
+  try {
+    const active = await isProjectActive(client, ws);
+    tree.setPreflightWarning(
+      active ? undefined : "Проект приостановлен: не хватает средств или прав для создания и подключения Jupyter Server.",
+      generation,
+    );
+  } catch (err) {
+    tree.setPreflightWarning(`Не удалось проверить состояние проекта: ${errorMessage(err)}`, generation);
+  }
 }
 interface PollUntilOptions {
   title: string;
@@ -573,6 +674,37 @@ interface PollUntilOptions {
   isComplete: (nb: NotebookHandlerResponse | undefined) => boolean;
   isFailed?: (nb: NotebookHandlerResponse | undefined) => boolean;
   timeoutMessage: string;
+}
+
+/** A lost POST response is ambiguous: inspect current state, but never replay the mutation. */
+async function submitAndObserve(
+  submit: () => Promise<unknown>,
+  list: () => Promise<NotebookHandlerResponse[]>,
+  isComplete: (nb: NotebookHandlerResponse | undefined) => boolean,
+  uid: string,
+  generation: number,
+  tree: NotebooksTreeProvider,
+): Promise<boolean> {
+  try {
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: "Cloud.ru: отправка запроса…" },
+      submit,
+    );
+    return true;
+  } catch (err) {
+    if (!(err instanceof ApiError) || err.kind !== "network") throw err;
+    try {
+      const notebooks = await list();
+      tree.applyNotebooks(notebooks, generation);
+      if (isComplete(notebooks.find((notebook) => notebook.uid === uid))) return true;
+    } catch {
+      // The submission is still ambiguous; the original error is the useful diagnostic.
+    }
+    void vscode.window.showWarningMessage(
+      `Не удалось подтвердить результат запроса: ${err.message}. Повторно команда не отправлена; обновите список и проверьте статус ноутбука.`,
+    );
+    return false;
+  }
 }
 
 /**
@@ -587,27 +719,41 @@ async function pollUntil(
   uid: string,
   tree: NotebooksTreeProvider,
   opts: PollUntilOptions,
+  generation: number,
 ): Promise<PollOutcome> {
   const outcome = await vscode.window.withProgress(
     { location: vscode.ProgressLocation.Notification, title: opts.title, cancellable: true },
-    (_progress, token) =>
-      pollNotebookStatus({
-        list: () => client.listNotebooks(ws),
+    async (_progress, token) => {
+      const abort = new AbortController();
+      const listener = token.onCancellationRequested(() => abort.abort());
+      if (token.isCancellationRequested) abort.abort();
+      try {
+        return await pollNotebookStatus({
+        list: (signal) => client.listNotebooks(ws, signal),
         uid,
         isComplete: opts.isComplete,
         ...(opts.isFailed ? { isFailed: opts.isFailed } : {}),
-        onNotebooks: (list) => tree.applyNotebooks(list),
+        onNotebooks: (list) => tree.applyNotebooks(list, generation),
         isCancelled: () => token.isCancellationRequested,
+        signal: abort.signal,
         isSignedOutError: (err) => err instanceof NotSignedInError,
         timeoutMs: opts.timeoutMs,
-      }),
+        });
+      } finally {
+        listener.dispose();
+      }
+    },
   );
   tree.refresh();
   if (outcome.kind === "networkErrors") {
     const detail = outcome.error instanceof ApiError ? outcome.error.message : String(outcome.error);
     void vscode.window.showErrorMessage(`Cloud.ru: потеряна связь при отслеживании статуса. ${detail}`);
+  } else if (outcome.kind === "requestError") {
+    void vscode.window.showErrorMessage(outcome.error.message);
   } else if (outcome.kind === "timeout") {
     void vscode.window.showWarningMessage(opts.timeoutMessage);
+  } else if (outcome.kind === "cancelled") {
+    void vscode.window.showInformationMessage("Отслеживание остановлено. Операция на сервере может продолжаться; обновите список позже.");
   }
   return outcome;
 }
@@ -615,6 +761,7 @@ async function pollUntil(
 async function withErrorHandling(
   auth: ConsoleTokenProvider,
   logger: Logger,
+  retryable: boolean,
   body: (...args: unknown[]) => Promise<void>,
   ...args: unknown[]
 ): Promise<void> {
@@ -628,10 +775,10 @@ async function withErrorHandling(
         await auth.handleExpiredSession(); // single expiry path: one "Войти" toast
         return;
       }
-      if (err.kind === "network") {
+      if (err.kind === "network" && retryable) {
         const RETRY = "Повторить";
         const choice = await vscode.window.showErrorMessage(err.message, RETRY);
-        if (choice === RETRY) await withErrorHandling(auth, logger, body, ...args);
+        if (choice === RETRY) await withErrorHandling(auth, logger, retryable, body, ...args);
         return;
       }
       void vscode.window.showErrorMessage(err.message);

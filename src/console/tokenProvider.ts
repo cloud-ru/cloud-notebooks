@@ -1,5 +1,4 @@
 import * as fs from "node:fs";
-import * as path from "node:path";
 import * as vscode from "vscode";
 import puppeteer from "puppeteer-core";
 import { isJwtExpired } from "../auth/jwt";
@@ -13,6 +12,14 @@ const DEFAULT_CONSOLE_URL = "https://console.cloud.ru/";
 interface CdpCookie {
   name: string;
   value: string;
+  domain: string;
+}
+
+export class TokenMintError extends Error {
+  constructor(readonly reason: "browser" | "navigation" | "network", message: string) {
+    super(message);
+    this.name = "TokenMintError";
+  }
 }
 
 /** Thrown when the persisted Cloud.ru session can no longer mint a token (SSO expired/revoked). Lets
@@ -20,7 +27,7 @@ interface CdpCookie {
  * toast — the provider already flips auth state and prompts. */
 export class NotSignedInError extends Error {
   constructor() {
-    super("Not signed in to Cloud.ru. Run “Cloud.ru: Sign In”.");
+    super("Вход в Cloud.ru не выполнен. Выполните команду «Cloud.ru: Войти».");
     this.name = "NotSignedInError";
   }
 }
@@ -38,6 +45,8 @@ export class ConsoleTokenProvider {
   private expiryAnnounced = false;
   /** Serializes browser launches so concurrent callers never collide on the profile's SingletonLock. */
   private chain: Promise<string | undefined> = Promise.resolve(undefined);
+  private generation = 0;
+  private readonly activeMints = new Set<AbortController>();
   private readonly onDidChange = new vscode.EventEmitter<boolean>();
   readonly onDidChangeAuth = this.onDidChange.event;
   /** Fires while a silent (headless) mint is in flight, so the tree can show "signing in…" instead of
@@ -62,6 +71,7 @@ export class ConsoleTokenProvider {
    * cancellable progress notification so the user knows the extension is waiting on the browser, and
    * so cancelling actually closes the window instead of leaving it stranded for up to 5 minutes. */
   async signIn(): Promise<boolean> {
+    const generation = this.generation;
     let cancelled = false;
     const token = await vscode.window.withProgress(
       {
@@ -78,7 +88,7 @@ export class ConsoleTokenProvider {
         return this.mint(true, controller.signal);
       },
     );
-    if (token) {
+    if (token && generation === this.generation) {
       await this.deps.context.globalState.update(SIGNED_IN_KEY, true);
       this.onDidChange.fire(true);
       return true;
@@ -92,6 +102,8 @@ export class ConsoleTokenProvider {
   }
 
   async signOut(): Promise<void> {
+    this.generation++;
+    for (const controller of this.activeMints) controller.abort();
     this.cached = undefined;
     this.expiryAnnounced = false; // explicit sign-out is not an "expired session"
     await this.deps.context.globalState.update(SIGNED_IN_KEY, false);
@@ -103,8 +115,16 @@ export class ConsoleTokenProvider {
    * mint) and prompt the user to re-authenticate. One-shot until the next successful sign-in. Public so
    * command error handling can route a post-retry 401 through the same single path. */
   async handleExpiredSession(): Promise<void> {
-    if (this.expiryAnnounced || !(await this.isSignedIn())) return;
+    if (this.expiryAnnounced) return;
     this.expiryAnnounced = true;
+    const generation = this.generation;
+    if (!(await this.isSignedIn())) {
+      this.expiryAnnounced = false;
+      return;
+    }
+    if (generation !== this.generation) return;
+    this.generation++;
+    for (const controller of this.activeMints) controller.abort();
     this.cached = undefined;
     await this.deps.context.globalState.update(SIGNED_IN_KEY, false);
     this.onDidChange.fire(false);
@@ -123,12 +143,14 @@ export class ConsoleTokenProvider {
   /** Valid Bearer for the console API, minting silently from the persisted session when expired.
    * `forceRefresh` discards the cached token (e.g. after a 401) so the next call re-mints. */
   async getAccessToken(forceRefresh = false): Promise<string> {
+    const generation = this.generation;
+    if (!(await this.isSignedIn()) || generation !== this.generation) throw new NotSignedInError();
     if (forceRefresh) this.cached = undefined;
     if (this.cached && !isJwtExpired(this.cached)) return this.cached;
     // Never launch a (headless) browser when the user isn't signed in — that is a 30s stall for
     // nothing. Only the interactive signIn() path may open a browser while signed out.
-    if (!(await this.isSignedIn())) throw new NotSignedInError();
     const token = await this.withMinting(() => this.mint(false));
+    if (generation !== this.generation || !(await this.isSignedIn())) throw new NotSignedInError();
     if (!token) {
       await this.handleExpiredSession();
       throw new NotSignedInError();
@@ -138,10 +160,19 @@ export class ConsoleTokenProvider {
 
   /** Serialize mints so two browser launches never share the profile concurrently. */
   private mint(interactive: boolean, signal?: AbortSignal): Promise<string | undefined> {
+    const controller = new AbortController();
+    const generation = this.generation;
+    const onAbort = () => controller.abort();
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) controller.abort();
+    this.activeMints.add(controller);
     const next = this.chain.then(
-      () => this.doMint(interactive, signal),
-      () => this.doMint(interactive, signal),
-    );
+      () => this.doMint(interactive, controller.signal, generation),
+      () => this.doMint(interactive, controller.signal, generation),
+    ).finally(() => {
+      signal?.removeEventListener("abort", onAbort);
+      this.activeMints.delete(controller);
+    });
     this.chain = next.catch(() => undefined);
     return next;
   }
@@ -157,80 +188,96 @@ export class ConsoleTokenProvider {
     }
   }
 
-  private async doMint(interactive: boolean, signal?: AbortSignal): Promise<string | undefined> {
+  private async doMint(interactive: boolean, signal: AbortSignal, generation: number): Promise<string | undefined> {
+    if (signal.aborted || generation !== this.generation) return undefined;
     // A queued earlier mint may have already refreshed the token.
     if (!interactive && this.cached && !isJwtExpired(this.cached)) return this.cached;
 
     const config = vscode.workspace.getConfiguration("cloudru");
     const chromePath = findChrome(config.get<string>("notebook.chromePath", ""));
     if (!chromePath) {
-      void vscode.window.showErrorMessage(
-        "Не найден Chrome/Chromium для входа. Укажите путь к браузеру в «cloudru.notebook.chromePath».",
-      );
-      return undefined;
+      throw new TokenMintError("browser", "Не найден Chrome/Chromium. Укажите путь в «cloudru.notebook.chromePath».");
     }
     const consoleUrl = config.get<string>("console.url", DEFAULT_CONSOLE_URL);
     const userDataDir = vscode.Uri.joinPath(this.deps.context.globalStorageUri, "console-profile").fsPath;
     fs.mkdirSync(userDataDir, { recursive: true });
-    // Clear stale single-instance locks left by a crashed/not-closed previous browser.
-    for (const lock of ["SingletonLock", "SingletonCookie", "SingletonSocket"]) {
-      try {
-        fs.rmSync(path.join(userDataDir, lock), { force: true });
-      } catch {
-        // ignore
-      }
+    if (signal.aborted || generation !== this.generation) return undefined;
+    let browser: Awaited<ReturnType<typeof puppeteer.launch>>;
+    try {
+      browser = await puppeteer.launch({
+        headless: !interactive,
+        executablePath: chromePath,
+        userDataDir,
+        defaultViewport: null,
+        args: ["--no-first-run", "--no-default-browser-check"],
+      });
+    } catch (error) {
+      if (signal.aborted) return undefined;
+      throw new TokenMintError("browser", `Не удалось открыть Chrome для Cloud.ru: ${String(error)}`);
     }
-    if (signal?.aborted) return undefined;
-    const browser = await puppeteer.launch({
-      headless: !interactive,
-      executablePath: chromePath,
-      userDataDir,
-      defaultViewport: null,
-      args: ["--no-first-run", "--no-default-browser-check"],
-    });
     // Cancelling the sign-in progress must actually close the window, not orphan it for 5 min.
     const onAbort = (): void => void browser.close().catch(() => undefined);
-    if (signal) signal.addEventListener("abort", onAbort);
+    signal.addEventListener("abort", onAbort, { once: true });
     try {
+      if (signal.aborted || generation !== this.generation) return undefined;
       const page = (await browser.pages())[0] ?? (await browser.newPage());
       const client = await page.target().createCDPSession();
-      await page.goto(consoleUrl, { waitUntil: "domcontentloaded" }).catch(() => undefined);
+      try {
+        await page.goto(consoleUrl, { waitUntil: "domcontentloaded" });
+      } catch (error) {
+        if (signal.aborted) return undefined;
+        throw new TokenMintError("navigation", `Не удалось открыть Cloud.ru: ${String(error)}`);
+      }
 
       const deadline = Date.now() + (interactive ? 300_000 : 30_000);
+      const host = new URL(consoleUrl).hostname.toLowerCase();
       while (Date.now() < deadline) {
-        if (signal?.aborted) return undefined;
+        if (signal.aborted || generation !== this.generation) return undefined;
         let cookies: CdpCookie[];
         try {
           ({ cookies } = (await client.send("Network.getAllCookies")) as { cookies: CdpCookie[] });
-        } catch {
-          break; // window/CDP closed
+        } catch (error) {
+          if (signal.aborted) return undefined;
+          throw new TokenMintError("network", `Не удалось проверить сессию Cloud.ru: ${String(error)}`);
         }
-        const match = cookies.find((c) => c.name === SESSION_COOKIE && c.value && !isJwtExpired(c.value));
+        if (signal.aborted || generation !== this.generation) return undefined;
+        const match = cookies.find((c) => {
+          const domain = c.domain?.replace(/^\./, "").toLowerCase();
+          return c.name === SESSION_COOKIE && c.value && !isJwtExpired(c.value) &&
+            domain && (host === domain || host.endsWith(`.${domain}`));
+        });
         if (match) {
           this.cached = match.value;
           this.expiryAnnounced = false;
           return match.value;
         }
-        await delay(800);
+        await delay(800, signal);
       }
       return undefined;
     } catch (err) {
+      if (signal.aborted) return undefined;
+      if (err instanceof TokenMintError) throw err;
       this.deps.logger.error("Console token mint failed", err);
-      return undefined;
+      throw new TokenMintError("network", `Не удалось получить токен Cloud.ru: ${String(err)}`);
     } finally {
-      if (signal) signal.removeEventListener("abort", onAbort);
+      signal.removeEventListener("abort", onAbort);
       await browser.close().catch(() => undefined);
     }
   }
 
   dispose(): void {
+    this.generation++;
+    for (const controller of this.activeMints) controller.abort();
     this.onDidChange.dispose();
     this.onMinting.dispose();
   }
 }
 
-function delay(ms: number): Promise<void> {
-  const { promise, resolve } = Promise.withResolvers<void>();
-  setTimeout(resolve, ms);
-  return promise;
+function delay(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const onAbort = () => { clearTimeout(timer); resolve(); };
+    const timer = setTimeout(() => { signal.removeEventListener("abort", onAbort); resolve(); }, ms);
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+  });
 }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ConsoleApiClient } from "../../src/console/apiClient";
 import type { HttpFetch } from "../../src/console/consoleHttp";
 
@@ -60,14 +60,64 @@ describe("ConsoleApiClient.listWorkspaces", () => {
     expect("x-workspace-id" in (captured[0]?.headers ?? {})).toBe(false);
   });
 
-  it("returns [] when the body is not an array", async () => {
+  it("rejects a malformed body instead of reporting an empty workspace list", async () => {
     const captured: Captured[] = [];
     const client = makeClient({ unexpected: true }, captured);
-    expect(await client.listWorkspaces()).toEqual([]);
+    await expect(client.listWorkspaces()).rejects.toMatchObject({ kind: "unknown" });
   });
 });
 
 describe("ConsoleApiClient.listNotebooks", () => {
+  it("starts a fresh list after context invalidation even for the same workspace id", async () => {
+    const pending: Array<(body: unknown) => void> = [];
+    const client = new ConsoleApiClient({
+      baseUrl: "https://console.cloud.ru/aicloud/ui", getToken: async () => "tok",
+      fetchImpl: () => new Promise((resolve) => {
+        pending.push((body) => resolve({
+          ok: true, status: 200, headers: { get: () => null }, text: async () => JSON.stringify(body),
+        }));
+      }),
+    });
+    const ws = { workspaceId: "same", workspaceName: "WS" };
+    const old = client.listNotebooks(ws);
+    await Promise.resolve();
+    client.invalidateContext();
+    const current = client.listNotebooks(ws);
+    await Promise.resolve();
+    expect(pending).toHaveLength(2);
+    pending[0]({ notebooks: [{ uid: "old", name: "old", status: "running", region: "SR008" }] });
+    expect((await old).map((item) => item.uid)).toEqual(["old"]);
+    const joined = client.listNotebooks(ws);
+    expect(pending).toHaveLength(2);
+    pending[1]({ notebooks: [{ uid: "new", name: "new", status: "running", region: "SR008" }] });
+    expect((await current).map((item) => item.uid)).toEqual(["new"]);
+    expect((await joined).map((item) => item.uid)).toEqual(["new"]);
+  });
+
+  it("cancels one subscriber without cancelling the shared list request", async () => {
+    let complete!: (value: ReturnType<HttpFetch> extends Promise<infer R> ? R : never) => void;
+    const pending = new Promise<Awaited<ReturnType<HttpFetch>>>((resolve) => { complete = resolve; });
+    let calls = 0;
+    const client = new ConsoleApiClient({
+      baseUrl: "https://console.cloud.ru/aicloud/ui", getToken: async () => "tok",
+      fetchImpl: async () => { calls++; return pending; },
+    });
+    const ws = { workspaceId: "w1", workspaceName: "WS" };
+    const controller = new AbortController();
+    const cancelled = client.listNotebooks(ws, controller.signal);
+    const remaining = client.listNotebooks(ws);
+    controller.abort();
+    await expect(cancelled).rejects.toMatchObject({ name: "AbortError" });
+    complete({ ok: true, status: 200, headers: { get: () => null }, text: async () => '{"notebooks":[]}' });
+    await expect(remaining).resolves.toEqual([]);
+    expect(calls).toBe(1);
+  });
+
+  it("rejects a missing notebooks field instead of reporting an empty list", async () => {
+    const client = makeClient({ unexpected: true }, []);
+    await expect(client.listNotebooks({ workspaceId: "w1", workspaceName: "WS" }))
+      .rejects.toMatchObject({ kind: "unknown" });
+  });
   it("sends x-workspace-id for workspace-scoped calls", async () => {
     const captured: Captured[] = [];
     const client = makeClient({ notebooks: [] }, captured);
@@ -226,6 +276,17 @@ describe("ConsoleApiClient.getSshGatewayConfig", () => {
 });
 
 describe("ConsoleApiClient auth retry", () => {
+  it("routes a final 401 through the auth callback for any consumer", async () => {
+    const onAuthFailure = vi.fn(async () => {});
+    const client = new ConsoleApiClient({
+      baseUrl: "https://console.cloud.ru/aicloud/ui", getToken: async () => "stale",
+      fetchImpl: expiringFetch({ notebooks: [] }, []), onAuthFailure,
+    });
+    await expect(client.listNotebooks({ workspaceId: "w1", workspaceName: "WS" }))
+      .rejects.toMatchObject({ kind: "auth" });
+    expect(onAuthFailure).toHaveBeenCalledTimes(1);
+  });
+
   it("re-mints the token and retries once after a 401", async () => {
     const captured: Captured[] = [];
     const tokens = ["stale", "fresh"];

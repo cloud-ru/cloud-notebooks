@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { pollNotebookStatus, type PollOutcome } from "../../src/console/pollLoop";
 import type { NotebookHandlerResponse, NotebookStatus } from "../../src/api/types";
+import { ApiError } from "../../src/api/errors";
 
 function nb(uid: string, status: NotebookStatus): NotebookHandlerResponse {
   return {
@@ -43,6 +44,50 @@ function expectKind<K extends PollOutcome["kind"]>(
 // clock inside `delay`. `delay` is always a synchronous no-op — no real timers run.
 
 describe("pollNotebookStatus", () => {
+  it("stops a pending list when progress is cancelled", async () => {
+    const controller = new AbortController();
+    const outcome = pollNotebookStatus({
+      list: () => new Promise<NotebookHandlerResponse[]>(() => {}),
+      uid: "target", isComplete: () => false, signal: controller.signal,
+      timeoutMs: 60_000,
+    });
+    controller.abort();
+    await expect(outcome).resolves.toEqual({ kind: "cancelled" });
+  });
+
+  it("times out a pending list without waiting for transport completion", async () => {
+    const outcome = await pollNotebookStatus({
+      list: () => new Promise<NotebookHandlerResponse[]>(() => {}),
+      uid: "target", isComplete: () => false, timeoutMs: 20,
+    });
+    expect(outcome).toEqual({ kind: "timeout" });
+  });
+
+  it("stops immediately on a forbidden response", async () => {
+    const { list, state } = scripted([() => { throw new ApiError("forbidden", "No access", { status: 403 }); }]);
+    const outcome = await pollNotebookStatus({
+      list, uid: "target", isComplete: () => false, timeoutMs: 60_000,
+      now: () => 0, delay: async () => {},
+    });
+    expect(outcome).toMatchObject({ kind: "requestError" });
+    expect(state.calls).toBe(1);
+  });
+
+  it("uses Retry-After for a rate limited list request", async () => {
+    const { list } = scripted([
+      () => { throw new ApiError("rateLimit", "Slow down", { status: 429, retryAfterSeconds: 5 }); },
+      () => [nb("target", "running")],
+    ]);
+    const delays: number[] = [];
+    const outcome = await pollNotebookStatus({
+      list, uid: "target", isComplete: (item) => item?.status === "running",
+      timeoutMs: 60_000, now: () => 0,
+      delay: async (ms) => { delays.push(ms); },
+    });
+    expect(outcome.kind).toBe("done");
+    expect(delays).toEqual([5_000]);
+  });
+
   it("resolves 'done' when the watched notebook satisfies isComplete", async () => {
     const seen: NotebookHandlerResponse[][] = [];
     const { list, state } = scripted([
