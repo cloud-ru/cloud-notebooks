@@ -1,4 +1,11 @@
-import { describe, expect, it } from "vitest";
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+const home = vi.hoisted(() => ({ path: "" }));
+vi.mock("node:os", async (importOriginal) => ({ ...(await importOriginal<typeof import("node:os")>()), homedir: () => home.path }));
+vi.mock("vscode", () => ({}));
+import { ensureHostEntry } from "../../src/ssh/remoteSsh";
 import { formatHostStanza, upsertSshConfigBlock } from "../../src/ssh/sshConfigFile";
 
 const entry = {
@@ -9,13 +16,13 @@ const entry = {
 };
 
 describe("formatHostStanza", () => {
-  it("quotes paths and forces ssh-rsa + accept-new", () => {
+  it("quotes paths and requires a pinned host key", () => {
     const stanza = formatHostStanza("cloudru-x", entry, "/g/known_hosts");
     expect(stanza).toContain("Host cloudru-x");
     expect(stanza).toContain("HostName ssh-jupyter.ai.cloud.ru");
     expect(stanza).toContain('IdentityFile "/keys/distributed train key (1).txt"');
     expect(stanza).toContain("HostKeyAlgorithms +ssh-rsa");
-    expect(stanza).toContain("StrictHostKeyChecking accept-new");
+    expect(stanza).toContain("StrictHostKeyChecking yes");
     expect(stanza).toContain('UserKnownHostsFile "/g/known_hosts"');
   });
 });
@@ -48,5 +55,38 @@ describe("upsertSshConfigBlock", () => {
     const withBoth = upsertSshConfigBlock(withX, "cloudru-y", "Host cloudru-y\n  Port 2");
     expect(withBoth).toContain("cloudru-x");
     expect(withBoth).toContain("cloudru-y");
+  });
+});
+
+describe("ensureHostEntry", () => {
+  const hostKeyLine = `[${entry.host}]:${entry.port} ssh-ed25519 AAAATEST`;
+  const context = { globalStorageUri: { fsPath: "" } };
+  beforeEach(async () => {
+    home.path = await fs.mkdtemp(path.join(os.tmpdir(), "cloudru-ssh-config-"));
+    context.globalStorageUri.fsPath = path.join(home.path, "storage");
+  });
+  afterEach(async () => { await fs.rm(home.path, { recursive: true, force: true }); });
+
+  it("keeps an unreadable config instead of replacing it", async () => {
+    const configPath = path.join(home.path, ".ssh", "config");
+    await fs.mkdir(configPath, { recursive: true });
+    await expect(ensureHostEntry("cloudru-x", entry, context as never, hostKeyLine)).rejects.toMatchObject({ code: "EISDIR" });
+    expect((await fs.stat(configPath)).isDirectory()).toBe(true);
+  });
+
+  it("serializes two updates and preserves both host blocks", async () => {
+    await Promise.all([
+      ensureHostEntry("cloudru-x", entry, context as never, hostKeyLine),
+      ensureHostEntry("cloudru-y", entry, context as never, hostKeyLine),
+    ]);
+    const contents = await fs.readFile(path.join(home.path, ".ssh", "config"), "utf8");
+    expect(contents).toContain("Host cloudru-x");
+    expect(contents).toContain("Host cloudru-y");
+    expect(await fs.readFile(path.join(home.path, "storage", "known_hosts"), "utf8")).toBe(`${hostKeyLine}\n`);
+  });
+
+  it("does not write after context changes", async () => {
+    await ensureHostEntry("cloudru-x", entry, context as never, hostKeyLine, () => false);
+    await expect(fs.readFile(path.join(home.path, ".ssh", "config"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 });

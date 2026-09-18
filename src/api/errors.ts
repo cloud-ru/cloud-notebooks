@@ -48,17 +48,17 @@ function messageForKind(kind: ApiErrorKind, status: number, detail: string | und
   const suffix = detail ? ` — ${detail}` : "";
   switch (kind) {
     case "auth":
-      return `Authentication failed (HTTP ${status}). Check your Cloud.ru access key or sign in again.${suffix}`;
+      return `Сессия Cloud.ru истекла (HTTP ${status}). Войдите снова.${suffix}`;
     case "forbidden":
-      return `Access denied (HTTP ${status}). Your account lacks permission for this workspace.${suffix}`;
+      return `Нет доступа к выбранному воркспейсу (HTTP ${status}). Проверьте права в Cloud.ru.${suffix}`;
     case "notFound":
-      return `Resource not found (HTTP ${status}).${suffix}`;
+      return `Ресурс не найден (HTTP ${status}). Обновите список.${suffix}`;
     case "rateLimit":
-      return `Rate limit exceeded (HTTP ${status}). Slow down and retry shortly.${suffix}`;
+      return `Слишком много запросов (HTTP ${status}). Подождите и повторите позже.${suffix}`;
     case "backend":
-      return `Cloud.ru service error (HTTP ${status}). Try again later.${suffix}`;
+      return `Ошибка сервиса Cloud.ru (HTTP ${status}). Повторите позже.${suffix}`;
     default:
-      return `Unexpected response (HTTP ${status}).${suffix}`;
+      return `Неожиданный ответ Cloud.ru (HTTP ${status}). Откройте диагностику расширения.${suffix}`;
   }
 }
 

@@ -15,11 +15,12 @@
 
 ## Требования
 
-- **Node.js ≥ 22.** В рантайме используется `Promise.withResolvers`, поэтому нужен Node 22+ (его несёт
-  и свежий VS Code/Cursor).
+- **Node.js ≥ 22** для разработки. В рантайме используется `Promise.withResolvers`; VS Code 1.101
+  [перешёл на Node.js 22](https://code.visualstudio.com/updates/v1_101). Версию Node внутри Cursor
+  нужно проверить отдельно перед установкой.
 - **pnpm** — пакетный менеджер проекта (версия закреплена в `package.json` → `packageManager`). Проще
   всего через Corepack: `corepack enable` (идёт с Node), либо `npm i -g pnpm` / `brew install pnpm`.
-- **VS Code ≥ 1.90** (или совместимый форк — Cursor, VSCodium).
+- **VS Code ≥ 1.101** (или форк с совместимым extension host на Node.js 22).
 - **Системный Chrome / Chromium / Edge** — нужен для одноразового входа в Cloud.ru (расширение не
   тащит свой браузер). Автоопределяется; путь можно задать в настройке `cloudru.notebook.chromePath`.
 - Для работы с ноутбуками: учётная запись Cloud.ru с доступом к Distributed Train-воркспейсу. **Ключи и

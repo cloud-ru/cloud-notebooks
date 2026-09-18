@@ -30,6 +30,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const client = new ConsoleApiClient({
     baseUrl: consoleBaseUrl,
     getToken: (forceRefresh) => auth.getAccessToken(forceRefresh),
+    onAuthFailure: () => auth.handleExpiredSession(),
     logger,
   });
 
@@ -50,7 +51,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(notebooksView);
   tree.attachView(notebooksView);
 
-  const sshConfig = new SshConfig(context, { client, getWorkspace: () => session.get(), logger });
+  const sshConfig = new SshConfig(context, {
+    client, getWorkspace: () => session.get(), getGeneration: () => session.getGeneration(),
+    isSignedIn: () => auth.isSignedIn(), logger,
+  });
 
   const notebooks = new NotebookViewController({ config: sshConfig, logger });
   context.subscriptions.push(notebooks);
@@ -60,15 +64,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     vscode.workspace.registerFileSystemProvider(SSH_SCHEME, sshFs, { isCaseSensitive: true }),
   );
-  const ssh = new SshController({ provider: sshFs, config: sshConfig, context, logger });
+  const ssh = new SshController({ provider: sshFs, config: sshConfig, context, logger, getGeneration: () => session.getGeneration() });
 
   // Remote kernel (Colab-style): contribute notebooks as Jupyter servers tunneled over SSH.
   const serverProvider = new CloudruServerProvider({
     config: sshConfig,
     getRunningNotebooks: async () => {
       const ws = session.get();
+      const generation = session.getGeneration();
       if (!ws || !(await auth.isSignedIn())) return [];
-      return client.listNotebooks(ws);
+      if (generation !== session.getGeneration()) return [];
+      const notebooks = await client.listNotebooks(ws);
+      return generation === session.getGeneration() ? notebooks : [];
     },
     logger,
   });
@@ -88,22 +95,32 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Keep the `when`-contexts, the tree, the status bar, and the kernel servers in sync.
   await syncContexts(await auth.isSignedIn(), auth.sessionExpired, Boolean(session.get()));
   await statusBar.refresh();
+  if (session.get() && await auth.isSignedIn()) {
+    void vscode.commands.executeCommand("cloudru.refreshNotebooks");
+  }
   context.subscriptions.push(
     auth.onDidChangeAuth(async (signedIn) => {
+      client.invalidateContext();
+      session.invalidateAuthContext();
+      tree.resetContext();
       await syncContexts(signedIn, auth.sessionExpired, Boolean(session.get()));
       if (!signedIn) {
         // Signed out: every tunnel/shim/panel belongs to a session we can no longer reach.
         notebooks.disposeAll();
         serverProvider.disposeAll();
+        sshFs.reset();
       }
       await statusBar.refresh();
       tree.refresh();
       serverProvider.refresh();
     }),
     session.onDidChangeWorkspace(async () => {
+      client.invalidateContext();
+      tree.resetContext();
       // Switching workspace: the cached tunnels point at the previous workspace's notebooks.
       notebooks.disposeAll();
       serverProvider.disposeAll();
+      sshFs.reset();
       await syncContexts(await auth.isSignedIn(), auth.sessionExpired, Boolean(session.get()));
       await statusBar.refresh();
       tree.refresh();

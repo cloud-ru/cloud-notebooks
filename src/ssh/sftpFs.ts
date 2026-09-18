@@ -1,4 +1,5 @@
 import { posix } from "node:path";
+import { pipeline } from "node:stream/promises";
 import * as vscode from "vscode";
 import type { FileEntry, SFTPWrapper, Stats } from "ssh2";
 import { SshConnection, type SshConnectionConfig } from "./connection";
@@ -38,6 +39,10 @@ function toFsError(error: unknown, uri: vscode.Uri): vscode.FileSystemError {
   }
 }
 
+function isChildPath(parent: string, child: string): boolean {
+  return parent !== child && (parent === "/" ? child.startsWith("/") : child.startsWith(`${parent}/`));
+}
+
 /**
  * A `FileSystemProvider` backed by SFTP. Each `cloudru-ssh://<authority>/<path>` authority is a
  * registered notebook SSH target. File ops map straight onto SFTP; `watch` is a no-op (Phase 1).
@@ -46,6 +51,9 @@ export class CloudruSshFsProvider implements vscode.FileSystemProvider {
   private readonly emitter = new vscode.EventEmitter<vscode.FileChangeEvent[]>();
   readonly onDidChangeFile = this.emitter.event;
   private readonly connections = new Map<string, SshConnection>();
+  private readonly connecting = new Map<string, Promise<SFTPWrapper>>();
+  private readonly authorityVersions = new Map<string, number>();
+  private generation = 0;
 
   /**
    * `reconnect` rebuilds a connection config for an authority without prompting — used to recover
@@ -55,10 +63,18 @@ export class CloudruSshFsProvider implements vscode.FileSystemProvider {
   constructor(private readonly reconnect?: (authority: string) => Promise<SshConnectionConfig | undefined>) {}
 
   register(authority: string, config: SshConnectionConfig): SshConnection {
+    this.authorityVersions.set(authority, (this.authorityVersions.get(authority) ?? 0) + 1);
     this.connections.get(authority)?.dispose();
     const connection = new SshConnection(config);
     this.connections.set(authority, connection);
     return connection;
+  }
+
+  invalidate(authority: string): void {
+    this.authorityVersions.set(authority, (this.authorityVersions.get(authority) ?? 0) + 1);
+    this.connections.get(authority)?.dispose();
+    this.connections.delete(authority);
+    this.connecting.delete(authority);
   }
 
   /** Resolve the login home directory of an authority (used as the mount root). */
@@ -100,6 +116,7 @@ export class CloudruSshFsProvider implements vscode.FileSystemProvider {
     try {
       const sftp = await this.sftpFor(uri.authority);
       await call<void>((cb) => sftp.mkdir(this.path(uri), (err) => cb(err)));
+      this.emitter.fire([{ type: vscode.FileChangeType.Created, uri }]);
     } catch (err) {
       throw toFsError(err, uri);
     }
@@ -119,14 +136,15 @@ export class CloudruSshFsProvider implements vscode.FileSystemProvider {
     content: Uint8Array,
     options: { create: boolean; overwrite: boolean },
   ): Promise<void> {
-    const sftp = await this.sftpFor(uri.authority);
-    const exists = await this.exists(sftp, this.path(uri));
-    if (!exists && !options.create) throw vscode.FileSystemError.FileNotFound(uri);
-    if (exists && !options.overwrite) throw vscode.FileSystemError.FileExists(uri);
     try {
+      const sftp = await this.sftpFor(uri.authority);
+      const exists = await this.exists(sftp, this.path(uri));
+      if (!exists && !options.create) throw vscode.FileSystemError.FileNotFound(uri);
+      if (exists && !options.overwrite) throw vscode.FileSystemError.FileExists(uri);
       await call<void>((cb) => sftp.writeFile(this.path(uri), Buffer.from(content), (err) => cb(err)));
       this.emitter.fire([{ type: exists ? vscode.FileChangeType.Changed : vscode.FileChangeType.Created, uri }]);
     } catch (err) {
+      if (err instanceof vscode.FileSystemError) throw err;
       throw toFsError(err, uri);
     }
   }
@@ -148,17 +166,25 @@ export class CloudruSshFsProvider implements vscode.FileSystemProvider {
         `Cannot move between two notebooks (${oldUri.authority} → ${newUri.authority})`,
       );
     }
+    const oldPath = posix.normalize(this.path(oldUri));
+    const newPath = posix.normalize(this.path(newUri));
+    if (newPath === oldPath || isChildPath(oldPath, newPath)) {
+      throw vscode.FileSystemError.NoPermissions("Cannot move a path into itself");
+    }
     try {
       const sftp = await this.sftpFor(oldUri.authority);
-      if (options.overwrite && (await this.exists(sftp, this.path(newUri)))) {
-        await this.remove(sftp, this.path(newUri), true);
+      if (await this.exists(sftp, newPath)) {
+        if (!options.overwrite) throw vscode.FileSystemError.FileExists(newUri);
+        // SFTP rename cannot promise an atomic replace on every gateway. Preserve the target.
+        throw vscode.FileSystemError.NoPermissions("Replacing an existing SSH file is not supported safely");
       }
-      await call<void>((cb) => sftp.rename(this.path(oldUri), this.path(newUri), (err) => cb(err)));
+      await call<void>((cb) => sftp.rename(oldPath, newPath, (err) => cb(err)));
       this.emitter.fire([
         { type: vscode.FileChangeType.Deleted, uri: oldUri },
         { type: vscode.FileChangeType.Created, uri: newUri },
       ]);
     } catch (err) {
+      if (err instanceof vscode.FileSystemError) throw err;
       throw toFsError(err, newUri);
     }
   }
@@ -166,17 +192,43 @@ export class CloudruSshFsProvider implements vscode.FileSystemProvider {
   /** Recursive copy (Explorer "Copy/Paste"). The provider implements it because the default
    * read+write fallback would re-download whole files through readFile instead of streaming. */
   async copy(source: vscode.Uri, destination: vscode.Uri, options: { overwrite: boolean }): Promise<void> {
+    if (source.authority !== destination.authority) {
+      throw vscode.FileSystemError.NoPermissions(
+        `Cannot copy between two notebooks (${source.authority} → ${destination.authority})`,
+      );
+    }
+    const srcPath = posix.normalize(this.path(source));
+    const dstPath = posix.normalize(this.path(destination));
+    if (srcPath === dstPath) throw vscode.FileSystemError.NoPermissions("Cannot copy a path onto itself");
     try {
       const sftp = await this.sftpFor(source.authority);
-      const srcPath = this.path(source);
-      const dstPath = this.path(destination);
       const stats = await call<Stats>((cb) => sftp.lstat(srcPath, (err, s) => cb(err, s)));
+      if (stats.isSymbolicLink()) {
+        throw vscode.FileSystemError.NoPermissions("Copying SSH symbolic links is not supported safely");
+      }
+      if (stats.isDirectory() && isChildPath(srcPath, dstPath)) {
+        throw vscode.FileSystemError.NoPermissions("Cannot copy a directory into itself");
+      }
       const exists = await this.exists(sftp, dstPath);
+      if (exists) {
+        const target = await call<Stats>((cb) => sftp.lstat(dstPath, (err, s) => cb(err, s)));
+        if (target.isSymbolicLink()) {
+          throw vscode.FileSystemError.NoPermissions("Cannot overwrite an SSH symbolic link");
+        }
+      }
       if (exists && !options.overwrite) throw vscode.FileSystemError.FileExists(destination);
       if (!stats.isDirectory()) {
-        const content = await readFile(sftp, srcPath);
-        await call<void>((cb) => sftp.writeFile(dstPath, content, (err) => cb(err)));
+        await pipeline(
+          sftp.createReadStream(srcPath),
+          sftp.createWriteStream(dstPath, { flags: options.overwrite ? "w" : "wx" }),
+        );
       } else {
+        const srcReal = await call<string>((cb) => sftp.realpath(srcPath, (err, path) => cb(err, path)));
+        const parentReal = await call<string>((cb) => sftp.realpath(posix.dirname(dstPath), (err, path) => cb(err, path)));
+        const dstReal = posix.join(parentReal, posix.basename(dstPath));
+        if (srcReal === dstReal || isChildPath(srcReal, dstReal)) {
+          throw vscode.FileSystemError.NoPermissions("Cannot copy a directory into itself through a symbolic link");
+        }
         if (!exists) {
           await call<void>((cb) => sftp.mkdir(dstPath, (err) => cb(err)));
         }
@@ -215,40 +267,52 @@ export class CloudruSshFsProvider implements vscode.FileSystemProvider {
     try {
       await call<Stats>((cb) => sftp.lstat(path, (err, s) => cb(err, s)));
       return true;
-    } catch {
-      return false;
+    } catch (error) {
+      if (classifySftpError(error) === "FileNotFound") return false;
+      throw error;
     }
   }
 
   private async sftpFor(authority: string): Promise<SFTPWrapper> {
     const existing = this.connections.get(authority);
     if (existing) return existing.sftp();
-
-    const config = await this.reconnect?.(authority);
-    if (!config) {
-      throw vscode.FileSystemError.Unavailable(
-        `No SSH connection for "${authority}". Re-run “Browse Notebook Files (SSH)”.`,
-      );
-    }
-    return this.register(authority, config).sftp();
+    const connecting = this.connecting.get(authority);
+    if (connecting) return connecting;
+    const generation = this.generation;
+    const version = this.authorityVersions.get(authority) ?? 0;
+    const pending = (async () => {
+      const config = await this.reconnect?.(authority);
+      if (generation !== this.generation || version !== (this.authorityVersions.get(authority) ?? 0)) {
+        throw vscode.FileSystemError.Unavailable("SSH context changed; reopen the notebook files.");
+      }
+      if (!config) {
+        throw vscode.FileSystemError.Unavailable(
+          `No SSH connection for "${authority}". Re-run “Browse Notebook Files (SSH)”.`,
+        );
+      }
+      return this.register(authority, config).sftp();
+    })().finally(() => {
+      if (this.connecting.get(authority) === pending) this.connecting.delete(authority);
+    });
+    this.connecting.set(authority, pending);
+    return pending;
   }
 
   private path(uri: vscode.Uri): string {
     return uri.path || "/";
   }
 
-  dispose(): void {
+  reset(): void {
+    this.generation++;
     for (const connection of this.connections.values()) connection.dispose();
     this.connections.clear();
+    this.connecting.clear();
+  }
+
+  dispose(): void {
+    this.reset();
     this.emitter.dispose();
   }
-}
-
-/** Promise-based sftp.readFile (the ssh2 callback API is inconsistent about buffer vs string). */
-function readFile(sftp: SFTPWrapper, path: string): Promise<Buffer> {
-  return new Promise<Buffer>((resolve, reject) =>
-    sftp.readFile(path, (err, data) => (err ? reject(err) : resolve(data as Buffer))),
-  );
 }
 
 /** Child URI one path segment below `parent` (paths are POSIX in the cloudru-ssh scheme). */

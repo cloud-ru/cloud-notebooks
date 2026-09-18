@@ -60,6 +60,49 @@ describe("consoleFetch timeout", () => {
 });
 
 describe("consoleFetch response", () => {
+  it("rejects when the response body is cut off after headers", async () => {
+    const port = await startServer((_req, res) => {
+      res.writeHead(200, { "content-length": "100" });
+      res.write("partial");
+      setTimeout(() => res.socket?.destroy(), 10);
+    });
+    const result = await Promise.race([
+      consoleFetch(`http://127.0.0.1:${port}/`, { method: "GET", headers: {}, timeoutMs: 100 })
+        .then(() => "resolved", () => "rejected"),
+      new Promise<string>((resolve) => setTimeout(() => resolve("pending"), 250)),
+    ]);
+    expect(result).toBe("rejected");
+  });
+
+  it("enforces a total deadline while the server keeps sending small chunks", async () => {
+    const port = await startServer((_req, res) => {
+      res.writeHead(200);
+      const timer = setInterval(() => res.write("x"), 10);
+      res.on("close", () => clearInterval(timer));
+    });
+    const result = await Promise.race([
+      consoleFetch(`http://127.0.0.1:${port}/`, { method: "GET", headers: {}, timeoutMs: 80 })
+        .then(() => "resolved", () => "rejected"),
+      new Promise<string>((resolve) => setTimeout(() => resolve("pending"), 250)),
+    ]);
+    expect(result).toBe("rejected");
+  });
+
+  it("aborts while reading the body", async () => {
+    const abort = new AbortController();
+    const port = await startServer((_req, res) => {
+      res.writeHead(200);
+      res.write("partial");
+      const timer = setTimeout(() => res.end("late"), 250);
+      res.on("close", () => clearTimeout(timer));
+    });
+    const reading = consoleFetch(`http://127.0.0.1:${port}/`, {
+      method: "GET", headers: {}, signal: abort.signal,
+    });
+    setTimeout(() => abort.abort(), 20);
+    await expect(reading).rejects.toThrow();
+  });
+
   it("resolves ok/status/text and does case-insensitive header lookup for a 200 body", async () => {
     const payload = JSON.stringify({ hello: "мир", n: 42 });
     const port = await startServer((_req, res) => {

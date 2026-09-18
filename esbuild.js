@@ -11,7 +11,7 @@ const options = {
   outfile: "dist/extension.js",
   platform: "node",
   format: "cjs",
-  target: "node18",
+  target: "node22",
   // vscode is provided by the runtime; puppeteer-core and ssh2 are heavy / have optional native bits,
   // so they are required from node_modules at runtime rather than bundled.
   external: ["vscode", "puppeteer-core", "ssh2"],

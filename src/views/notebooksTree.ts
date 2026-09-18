@@ -8,6 +8,7 @@ import type { Logger } from "../util/logger";
 import { notebookContextValue, presentNotebookStatus, statusLabel } from "../util/notebookStatus";
 import { hasBucketMountProblem } from "../console/notebookMapping";
 import type { FavoritesStore } from "./favoritesStore";
+import { buildNotebookActions } from "./notebookActions";
 import {
   describeFilter,
   distinctAuthors,
@@ -24,11 +25,25 @@ export interface NotebooksTreeDeps {
   logger: Logger;
 }
 
+type DataState = {
+  kind: "ready" | "refreshing" | "stale";
+  generation: number;
+  notebooks: NotebookHandlerResponse[];
+  error?: string;
+};
+type LoadState = { kind: "idle" | "loading"; generation: number } |
+  { kind: "error"; generation: number; error: string } | DataState;
+
+function hasData(state: LoadState): state is DataState {
+  return "notebooks" in state;
+}
+
 /** Tree node carrying the raw notebook so commands can act on it. */
 export class NotebookTreeItem extends vscode.TreeItem {
   constructor(
     readonly notebook: NotebookHandlerResponse,
     readonly favorite: boolean,
+    readonly contextGeneration: number,
   ) {
     super(notebook.name, vscode.TreeItemCollapsibleState.None);
     const presentation = presentNotebookStatus(notebook.status);
@@ -42,11 +57,16 @@ export class NotebookTreeItem extends vscode.TreeItem {
       presentation.icon,
       presentation.color ? new vscode.ThemeColor(presentation.color) : undefined,
     );
-    this.contextValue = notebookContextValue(notebook.status) + (favorite ? ".fav" : "");
+    this.contextValue = notebookContextValue(notebook.status)
+      + (notebook.accessGranted === false ? ".denied" : "")
+      + (!notebook.url ? ".noUrl" : "")
+      + (notebook.status === "deleted" ? ".deleted" : "")
+      + (notebook.region === "DGX2_MT" ? ".dgx2" : "")
+      + (favorite ? ".fav" : "");
     this.tooltip = buildTooltip(notebook, favorite);
 
     this.command =
-      presentation.isRunning && notebook.url
+      buildNotebookActions(notebook, favorite).some((action) => action.command === "cloudru.openNotebook")
         ? { command: "cloudru.openNotebook", title: "Открыть в VS Code", arguments: [this] }
         : { command: "cloudru.notebookActions", title: "Действия с ноутбуком", arguments: [this] };
   }
@@ -57,21 +77,15 @@ export class NotebooksTreeProvider implements vscode.TreeDataProvider<NotebookTr
   readonly onDidChangeTreeData = this.emitter.event;
 
   private filter: NotebookFilter = {};
-  private lastNotebooks: NotebookHandlerResponse[] = [];
+  private state: LoadState;
   private view: vscode.TreeView<NotebookTreeItem> | undefined;
   /** Sign-in-in-progress line (transient); highest priority. */
   private signInMessage: string | undefined;
-  /** Last load failure; shown until the next successful fetch. */
-  private loadError: string | undefined;
   /** Project-preflight warning; shown until the project is active again / workspace changes. */
   private preflightWarning: string | undefined;
-  /** Whether `lastNotebooks` holds a real fetch result yet (vs the empty initial value). */
-  private loaded = false;
-  /** When true, the next getChildren hits the network; applyNotebooks/poll data clears it so we serve
-   * the fresh list without a duplicate fetch. */
-  private refetchNeeded = true;
-
-  constructor(private readonly deps: NotebooksTreeDeps) {}
+  constructor(private readonly deps: NotebooksTreeDeps) {
+    this.state = { kind: "idle", generation: deps.session.getGeneration() };
+  }
 
   /** Wire the TreeView so the active filter can be shown as the view message. */
   attachView(view: vscode.TreeView<NotebookTreeItem>): void {
@@ -80,16 +94,41 @@ export class NotebooksTreeProvider implements vscode.TreeDataProvider<NotebookTr
   }
 
   refresh(): void {
-    this.refetchNeeded = true;
+    this.syncContext();
+    this.state = hasData(this.state)
+      ? { ...this.state, kind: "refreshing" }
+      : { kind: "loading", generation: this.state.generation };
+    this.syncFilterIndicators();
     this.emitter.fire();
   }
 
   /** Adopt an externally-fetched list (e.g. from the poll loop) and render it without refetching. */
-  applyNotebooks(notebooks: NotebookHandlerResponse[]): void {
-    this.lastNotebooks = notebooks;
-    this.loaded = true;
-    this.refetchNeeded = false;
+  applyNotebooks(notebooks: NotebookHandlerResponse[], generation: number): void {
+    this.syncContext();
+    if (generation !== this.state.generation) return;
+    this.state = { kind: "ready", generation, notebooks };
+    void vscode.commands.executeCommand("setContext", "cloudru.loadError", false);
+    this.syncFilterIndicators();
     this.emitter.fire();
+  }
+
+  /** Hide the previous context's rows synchronously when auth or workspace changes. */
+  resetContext(): void {
+    this.state = { kind: "idle", generation: this.deps.session.getGeneration() };
+    this.preflightWarning = undefined;
+    delete this.filter.author;
+    void vscode.commands.executeCommand("setContext", "cloudru.loadError", false);
+    this.syncFilterIndicators();
+    this.emitter.fire();
+  }
+
+  private syncContext(): void {
+    if (this.state.generation !== this.deps.session.getGeneration()) this.resetContext();
+  }
+
+  private notebooks(): NotebookHandlerResponse[] {
+    this.syncContext();
+    return hasData(this.state) ? this.state.notebooks : [];
   }
 
   setSearch(value: string | undefined): void {
@@ -97,6 +136,10 @@ export class NotebooksTreeProvider implements vscode.TreeDataProvider<NotebookTr
     if (trimmed) this.filter.search = trimmed;
     else delete this.filter.search;
     this.onFilterChanged();
+  }
+
+  currentSearch(): string {
+    return this.filter.search ?? "";
   }
 
   setAuthor(value: string | undefined): void {
@@ -124,13 +167,13 @@ export class NotebooksTreeProvider implements vscode.TreeDataProvider<NotebookTr
 
   /** Distinct authors from the most recent fetch, for the author-filter picker. */
   authors(): string[] {
-    return distinctAuthors(this.lastNotebooks);
+    return distinctAuthors(this.notebooks());
   }
 
   /** Status filter options with Russian labels and counts, for the status-filter picker. */
   statusFilterItems(): { status: NotebookStatus; label: string; count: number }[] {
     const counts = new Map<NotebookStatus, number>();
-    for (const nb of this.lastNotebooks) counts.set(nb.status, (counts.get(nb.status) ?? 0) + 1);
+    for (const nb of this.notebooks()) counts.set(nb.status, (counts.get(nb.status) ?? 0) + 1);
     return [...counts.entries()]
       .map(([status, count]) => ({ status, label: statusLabel(status), count }))
       .sort((a, b) => a.label.localeCompare(b.label, "ru"));
@@ -156,30 +199,38 @@ export class NotebooksTreeProvider implements vscode.TreeDataProvider<NotebookTr
 
   /** Whether the current list has any transient (busy) statuses — drives the auto-refresh cadence. */
   hasBusyNotebooks(): boolean {
-    return this.lastNotebooks.some((nb) => presentNotebookStatus(nb.status).isBusy);
+    return this.notebooks().some((nb) => presentNotebookStatus(nb.status).isBusy);
   }
 
   async getChildren(element?: NotebookTreeItem): Promise<NotebookTreeItem[]> {
     if (element) return []; // flat list
-
+    this.syncContext();
+    const generation = this.state.generation;
     if (!(await this.deps.isSignedIn())) return [];
+    if (generation !== this.deps.session.getGeneration()) return [];
     const ws = this.deps.session.get();
     if (!ws) return [];
 
-    if (this.refetchNeeded || !this.loaded) {
+    if (this.state.kind !== "ready") {
+      this.state = hasData(this.state)
+        ? { ...this.state, kind: "refreshing" }
+        : { kind: "loading", generation };
+      const requestState = this.state;
+      this.syncFilterIndicators();
       try {
-        this.lastNotebooks = await this.deps.client.listNotebooks(ws);
-        this.loaded = true;
-        this.refetchNeeded = false;
-        this.loadError = undefined;
-        void vscode.commands.executeCommand("setContext", "cloudru.loadError", false);
-        this.syncFilterIndicators();
+        const notebooks = await this.deps.client.listNotebooks(ws);
+        if (generation !== this.deps.session.getGeneration()) return [];
+        if (this.state === requestState) this.applyNotebooks(notebooks, generation);
       } catch (err) {
+        if (generation !== this.deps.session.getGeneration()) return [];
+        if (this.state !== requestState) return this.render();
         if (err instanceof NotSignedInError) return []; // provider flips auth + prompts; welcome takes over
         const message = err instanceof ApiError ? err.message : `Не удалось загрузить ноутбуки: ${String(err)}`;
         this.deps.logger.error("listNotebooks failed", err);
-        this.loadError = message;
-        void vscode.commands.executeCommand("setContext", "cloudru.loadError", true);
+        this.state = hasData(this.state)
+          ? { ...this.state, kind: "stale", error: message }
+          : { kind: "error", generation, error: message };
+        void vscode.commands.executeCommand("setContext", "cloudru.loadError", this.state.kind === "error");
         this.syncFilterIndicators();
         return this.render();
       }
@@ -188,8 +239,8 @@ export class NotebooksTreeProvider implements vscode.TreeDataProvider<NotebookTr
   }
 
   private render(): NotebookTreeItem[] {
-    const visible = filterNotebooks(this.lastNotebooks, this.filter, (uid) => this.deps.favorites.has(uid));
-    return visible.map((nb) => new NotebookTreeItem(nb, this.deps.favorites.has(nb.uid)));
+    const visible = filterNotebooks(this.notebooks(), this.filter, (uid) => this.deps.favorites.has(uid));
+    return visible.map((nb) => new NotebookTreeItem(nb, this.deps.favorites.has(nb.uid), this.state.generation));
   }
 
   private onFilterChanged(): void {
@@ -204,17 +255,28 @@ export class NotebooksTreeProvider implements vscode.TreeDataProvider<NotebookTr
   }
 
   /** Project-preflight warning (or clear with undefined). */
-  setPreflightWarning(message: string | undefined): void {
+  setPreflightWarning(message: string | undefined, generation = this.deps.session.getGeneration()): void {
+    this.syncContext();
+    if (generation !== this.state.generation) return;
     this.preflightWarning = message;
     this.syncFilterIndicators();
   }
 
   private syncFilterIndicators(): void {
+    const filtered = isFilterActive(this.filter);
+    const notebooks = hasData(this.state) ? this.state.notebooks : [];
+    const visibleCount = filterNotebooks(notebooks, this.filter, (uid) => this.deps.favorites.has(uid)).length;
     if (this.view) {
-      this.view.message =
-        this.signInMessage ?? this.loadError ?? this.preflightWarning ?? describeFilter(this.filter) ?? "";
+      const error = this.state.kind === "error" || this.state.kind === "stale" ? this.state.error : undefined;
+      const stateMessage = this.state.kind === "loading" ? "Загружаем ноутбуки…" :
+        this.state.kind === "stale" ? `Не удалось обновить; показаны сохранённые данные. ${error}` : error;
+      const filterMessage = filtered ? `${describeFilter(this.filter)} · ${visibleCount} из ${notebooks.length}` : undefined;
+      this.view.message = [this.signInMessage ?? stateMessage, this.preflightWarning, filterMessage]
+        .filter(Boolean).join(" · ");
     }
-    void vscode.commands.executeCommand("setContext", "cloudru.hasFilter", isFilterActive(this.filter));
+    void vscode.commands.executeCommand("setContext", "cloudru.hasFilter", filtered);
+    void vscode.commands.executeCommand("setContext", "cloudru.loading", this.state.kind === "idle" || this.state.kind === "loading");
+    void vscode.commands.executeCommand("setContext", "cloudru.filteredEmpty", filtered && hasData(this.state) && visibleCount === 0);
   }
 
   dispose(): void {
@@ -231,20 +293,27 @@ const ACCESS_MODE_LABELS: Record<string, string> = {
 function buildTooltip(nb: NotebookHandlerResponse, favorite: boolean): vscode.MarkdownString {
   const created = nb.creationTimestamp ? new Date(nb.creationTimestamp * 1000).toLocaleString() : "—";
   const md = new vscode.MarkdownString(undefined, true);
-  md.appendMarkdown(`**${nb.name}**${favorite ? " ★" : ""}\n\n`);
-  md.appendMarkdown(`- Статус: ${statusLabel(nb.status)}\n`);
-  md.appendMarkdown(`- Образ: ${nb.imageDisplayName}\n`);
-  md.appendMarkdown(`- Инстанс: ${nb.instanceType ?? "—"}\n`);
-  md.appendMarkdown(`- Регион: ${nb.region}\n`);
-  md.appendMarkdown(`- Автор: ${nb.author}\n`);
-  md.appendMarkdown(`- Создан: ${created}\n`);
-  if (nb.allocationName) md.appendMarkdown(`- Аллокация: ${nb.allocationName}\n`);
+  const line = (label: string, value: string) => {
+    md.appendMarkdown(`- ${label}: `);
+    md.appendText(value);
+    md.appendMarkdown("\n");
+  };
+  md.appendMarkdown("**");
+  md.appendText(nb.name);
+  md.appendMarkdown(`**${favorite ? " ★" : ""}\n\n`);
+  line("Статус", statusLabel(nb.status));
+  line("Образ", nb.imageDisplayName);
+  line("Инстанс", nb.instanceType ?? "—");
+  line("Регион", nb.region);
+  line("Автор", nb.author);
+  line("Создан", created);
+  if (nb.allocationName) line("Аллокация", nb.allocationName);
   const access = nb.accessMode ? ACCESS_MODE_LABELS[nb.accessMode] : undefined;
-  if (access) md.appendMarkdown(`- Доступ: ${access}\n`);
+  if (access) line("Доступ", access);
   if (nb.autoshutdownModes && nb.autoshutdownModes.length) {
-    md.appendMarkdown(`- Автовыключение: ${nb.autoshutdownModes.join(", ")}\n`);
+    line("Автовыключение", nb.autoshutdownModes.join(", "));
   }
-  if (nb.pause_at) md.appendMarkdown(`- Пауза запланирована: ${nb.pause_at}\n`);
+  if (nb.pause_at) line("Пауза запланирована", nb.pause_at);
   // The pod hit a node problem and will be restarted automatically (mirrors the console alert).
   if (nb.restartTimestamp) {
     md.appendMarkdown(`\n⚠️ Неполадка узла: сервер будет перезапущен ${new Date(nb.restartTimestamp).toLocaleString()}.\n`);
@@ -252,6 +321,6 @@ function buildTooltip(nb: NotebookHandlerResponse, favorite: boolean): vscode.Ma
   if (hasBucketMountProblem(nb)) {
     md.appendMarkdown("\n⚠️ Бакет не смонтирован — нет доступа или бакет не существует.\n");
   }
-  if (nb.description) md.appendMarkdown(`\n${nb.description}`);
+  if (nb.description) { md.appendMarkdown("\n"); md.appendText(nb.description); }
   return md;
 }

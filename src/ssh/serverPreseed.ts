@@ -29,6 +29,9 @@ const COMMIT_RE = /^[0-9a-f]{40}$/;
 /** Pod egress at or above this → skip pre-seeding, the pod installs faster on its own. */
 export const POD_FAST_THRESHOLD_BPS = 2 * 1024 * 1024;
 
+/** Extracting the ~150 MB server tarball on a throttled pod legitimately takes minutes. */
+const INSTALL_DEADLINE_MS = 600_000;
+
 /** When the local download looks slower than this policy, it detaches to the background. */
 export interface DeferPolicy {
   /** Measure at least this long before judging. */
@@ -264,16 +267,17 @@ export type PreseedResult =
 
 export interface PreseedDeps {
   product: ProductInfo;
-  /** Runs a remote command (script via `sh -s` stdin). */
-  exec: (command: string, stdin?: string) => Promise<ExecResult>;
   sftp: () => Promise<SFTPWrapper>;
   /** Local per-commit tarball cache dir (globalStorage). */
   cacheDir: string;
+  /** Aborts the whole pre-seed at the nearest checkpoint. */
+  signal?: AbortSignal;
+  deferPolicy?: DeferPolicy | undefined;
   fetchImpl?: typeof fetch;
   /** Progress callback: human message + absolute percent [0..100]. */
   report?: (message: string, percent: number) => void;
-  signal?: AbortSignal;
-  deferPolicy?: DeferPolicy | undefined;
+  /** Runs a remote command (script via `sh -s` stdin); `deadlineMs` overrides the transport default for long jobs. */
+  exec: (command: string, stdin?: string, signal?: AbortSignal, deadlineMs?: number) => Promise<ExecResult>;
   log: { info: (message: string) => void; warn: (message: string) => void };
 }
 
@@ -286,7 +290,7 @@ export async function preseedServer(deps: PreseedDeps): Promise<PreseedResult> {
   const paths = remotePaths(product);
 
   report("проверка сервера на ноутбуке…", 0);
-  const probeRun = await deps.exec("sh -s", buildProbeScript(paths));
+  const probeRun = await deps.exec("sh -s", buildProbeScript(paths), deps.signal);
   if (probeRun.code !== 0) {
     return { status: "skipped", reason: `probe exited with ${probeRun.code}: ${probeRun.stderr.trim()}` };
   }
@@ -305,7 +309,7 @@ export async function preseedServer(deps: PreseedDeps): Promise<PreseedResult> {
     // No cached tarball yet: if the pod's own egress is fast, pre-seeding only adds latency —
     // let Remote-SSH install on the pod (that also persists in the home volume for next time).
     report("оценка скорости сети ноутбука…", 2);
-    const speedRun = await deps.exec("sh -s", buildSpeedProbeScript(serverUrl));
+    const speedRun = await deps.exec("sh -s", buildSpeedProbeScript(serverUrl), deps.signal);
     const podBps = speedRun.code === 0 ? parseSpeedOutput(speedRun.stdout) : undefined;
     if (podBps !== undefined && podBps >= POD_FAST_THRESHOLD_BPS) {
       return { status: "skipped", reason: `pod egress is fast (${formatMb(podBps)} MB/s), Remote-SSH installs directly` };
@@ -359,6 +363,8 @@ export async function preseedServer(deps: PreseedDeps): Promise<PreseedResult> {
       serverTar: probe.serverPresent ? undefined : remoteServerTar,
       cliTar: remoteCliTar,
     }),
+    deps.signal,
+    INSTALL_DEADLINE_MS,
   );
   if (install.code !== 0) {
     throw new Error(`install script exited with ${install.code}: ${install.stderr.trim()}`);
@@ -663,17 +669,37 @@ function upload(
   onProgress: (done: number, total: number) => void,
 ): Promise<void> {
   const { promise, resolve, reject } = Promise.withResolvers<void>();
-  sftp.fastPut(
-    local,
-    remote,
-    {
-      step: (transferred, _chunk, total) => {
-        onProgress(transferred, total);
-        if (signal?.aborted) sftp.end();
-      },
-    },
-    (err) => (err ? reject(err) : resolve()),
-  );
+  throwIfAborted(signal);
+  let settled = false;
+  const finish = (error?: Error) => {
+    if (settled) return;
+    settled = true;
+    signal?.removeEventListener("abort", abort);
+    if (error) reject(error);
+    else resolve();
+  };
+  const abort = () => {
+    sftp.end();
+    finish(new DOMException("The operation was aborted.", "AbortError"));
+  };
+  signal?.addEventListener("abort", abort, { once: true });
+  if (!settled) {
+    try {
+      sftp.fastPut(
+        local,
+        remote,
+        {
+          step: (transferred, _chunk, total) => {
+            onProgress(transferred, total);
+            if (signal?.aborted) abort();
+          },
+        },
+        (err) => finish(err ?? undefined),
+      );
+    } catch (err) {
+      finish(err as Error);
+    }
+  }
   return promise;
 }
 

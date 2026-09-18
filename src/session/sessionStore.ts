@@ -9,6 +9,7 @@ const WORKSPACE_SECRET_KEY = "cloudru.workspace";
  */
 export class SessionStore {
   private current: WorkspaceContext | undefined;
+  private generation = 0;
   private readonly onDidChange = new vscode.EventEmitter<WorkspaceContext | undefined>();
   readonly onDidChangeWorkspace = this.onDidChange.event;
 
@@ -30,16 +31,28 @@ export class SessionStore {
     return this.current;
   }
 
+  /** Identifies the current auth/workspace context, including a re-login to the same workspace. */
+  getGeneration(): number {
+    return this.generation;
+  }
+
+  invalidateAuthContext(): void {
+    this.generation++;
+    this.onDidChange.fire(this.current);
+  }
+
   async set(ctx: WorkspaceContext): Promise<void> {
     this.current = ctx;
-    await this.secrets.store(WORKSPACE_SECRET_KEY, JSON.stringify(ctx));
+    this.generation++;
     this.onDidChange.fire(ctx);
+    await this.secrets.store(WORKSPACE_SECRET_KEY, JSON.stringify(ctx));
   }
 
   async clear(): Promise<void> {
     this.current = undefined;
-    await this.secrets.delete(WORKSPACE_SECRET_KEY);
+    this.generation++;
     this.onDidChange.fire(undefined);
+    await this.secrets.delete(WORKSPACE_SECRET_KEY);
   }
 
   dispose(): void {

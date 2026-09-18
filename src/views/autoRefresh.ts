@@ -20,31 +20,43 @@ export interface AutoRefreshDeps {
  */
 export class AutoRefresh {
   private timer: NodeJS.Timeout | undefined;
+  private focusListener: vscode.Disposable | undefined;
+  private version = 0;
   private disposed = false;
 
   constructor(private readonly deps: AutoRefreshDeps) {}
 
   start(): void {
+    this.focusListener = vscode.window.onDidChangeWindowState((state) => {
+      if (!state.focused || this.disposed) return;
+      this.version++;
+      clearTimeout(this.timer);
+      void this.tick(this.version);
+    });
     this.scheduleNext();
   }
 
   private scheduleNext(): void {
     if (this.disposed) return;
     const interval = this.deps.hasBusy() ? BUSY_INTERVAL_MS : IDLE_INTERVAL_MS;
-    this.timer = setTimeout(() => void this.tick(), interval);
+    const version = this.version;
+    this.timer = setTimeout(() => void this.tick(version), interval);
   }
 
-  private async tick(): Promise<void> {
-    if (this.disposed) return;
+  private async tick(version: number): Promise<void> {
+    if (this.disposed || version !== this.version) return;
     try {
-      if (vscode.window.state.focused && (await this.deps.isActive())) this.deps.refresh();
+      if (vscode.window.state.focused && (await this.deps.isActive()) && !this.disposed && version === this.version && vscode.window.state.focused) {
+        this.deps.refresh();
+      }
     } finally {
-      this.scheduleNext();
+      if (version === this.version) this.scheduleNext();
     }
   }
 
   dispose(): void {
     this.disposed = true;
+    this.focusListener?.dispose();
     clearTimeout(this.timer);
   }
 }

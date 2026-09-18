@@ -2,9 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 
 // tokenProvider imports `vscode` (an ambient host API, not an npm package) and `puppeteer-core`.
 // Shim both so the expiry FSM can be exercised without a real editor host or browser launch.
-const { showWarningMessage, showErrorMessage } = vi.hoisted(() => ({
+const { showWarningMessage, showErrorMessage, findChrome, launch } = vi.hoisted(() => ({
   showWarningMessage: vi.fn(async () => undefined),
   showErrorMessage: vi.fn(async () => undefined),
+  findChrome: vi.fn<() => string | undefined>(() => undefined),
+  launch: vi.fn(),
 }));
 vi.mock("vscode", () => {
   class EventEmitter<T> {
@@ -22,12 +24,12 @@ vi.mock("vscode", () => {
     EventEmitter,
     window: { showWarningMessage, showErrorMessage },
     workspace: { getConfiguration: () => ({ get: (_key: string, def?: unknown) => def }) },
+    Uri: { joinPath: () => ({ fsPath: "/tmp/cloudru-token-provider-test" }) },
   };
 });
 
-// No browser available → the silent (headless) mint fails fast, modelling an expired SSO session.
-vi.mock("../../src/jupyter/chrome", () => ({ findChrome: () => undefined }));
-vi.mock("puppeteer-core", () => ({ default: { launch: vi.fn() } }));
+vi.mock("../../src/jupyter/chrome", () => ({ findChrome }));
+vi.mock("puppeteer-core", () => ({ default: { launch } }));
 
 import { ConsoleTokenProvider, NotSignedInError } from "../../src/console/tokenProvider";
 
@@ -36,6 +38,7 @@ const SIGNED_IN_KEY = "cloudru.console.signedIn";
 function makeProvider(initialSignedIn: boolean) {
   const store = new Map<string, unknown>([[SIGNED_IN_KEY, initialSignedIn]]);
   const context = {
+    globalStorageUri: { fsPath: "/tmp" },
     globalState: {
       get: (key: string, def?: unknown) => (store.has(key) ? store.get(key) : def),
       update: async (key: string, value: unknown) => {
@@ -48,29 +51,63 @@ function makeProvider(initialSignedIn: boolean) {
 }
 
 describe("ConsoleTokenProvider expired session", () => {
-  it("flips to signed-out, fires the auth-change once, and prompts re-auth when a silent mint fails", async () => {
+  it("announces concurrent final auth failures once", async () => {
     showWarningMessage.mockClear();
     const provider = makeProvider(true);
-    const fired: boolean[] = [];
-    provider.onDidChangeAuth((signedIn) => fired.push(signedIn));
-
-    await expect(provider.getAccessToken()).rejects.toBeInstanceOf(NotSignedInError);
-
-    expect(await provider.isSignedIn()).toBe(false); // welcome view / guards now short-circuit
-    expect(fired).toEqual([false]); // drives setContext + tree/server refresh in extension.ts
-    expect(showWarningMessage).toHaveBeenCalledTimes(1); // actionable "Sign In" notification
+    await Promise.all([provider.handleExpiredSession(), provider.handleExpiredSession()]);
+    expect(showWarningMessage).toHaveBeenCalledTimes(1);
   });
 
-  it("only announces the expiry once across repeated failures (no toast storm)", async () => {
+  it("keeps the session when Chrome is unavailable", async () => {
     showWarningMessage.mockClear();
+    findChrome.mockReturnValue(undefined);
     const provider = makeProvider(true);
     const fired: boolean[] = [];
     provider.onDidChangeAuth((signedIn) => fired.push(signedIn));
 
-    await expect(provider.getAccessToken()).rejects.toBeInstanceOf(NotSignedInError);
-    await expect(provider.getAccessToken()).rejects.toBeInstanceOf(NotSignedInError);
+    await expect(provider.getAccessToken()).rejects.toMatchObject({ name: "TokenMintError" });
 
-    expect(fired).toEqual([false]); // second failure stays silent — already signed out
-    expect(showWarningMessage).toHaveBeenCalledTimes(1);
+    expect(await provider.isSignedIn()).toBe(true);
+    expect(fired).toEqual([]);
+    expect(showWarningMessage).not.toHaveBeenCalled();
+  });
+
+  it("does not turn repeated missing-browser failures into expiry", async () => {
+    showWarningMessage.mockClear();
+    findChrome.mockReturnValue(undefined);
+    const provider = makeProvider(true);
+    const fired: boolean[] = [];
+    provider.onDidChangeAuth((signedIn) => fired.push(signedIn));
+
+    await expect(provider.getAccessToken()).rejects.toMatchObject({ name: "TokenMintError" });
+    await expect(provider.getAccessToken()).rejects.toMatchObject({ name: "TokenMintError" });
+
+    expect(fired).toEqual([]);
+    expect(showWarningMessage).not.toHaveBeenCalled();
+  });
+
+  it("does not restore a token when logout happens during browser launch", async () => {
+    findChrome.mockReturnValue("/fake/chrome");
+    let finishLaunch!: (browser: unknown) => void;
+    launch.mockImplementationOnce(() => new Promise((resolve) => { finishLaunch = resolve; }));
+    const close = vi.fn(async () => {});
+    const token = `h.${Buffer.from(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 3600 })).toString("base64url")}.s`;
+    const browser = {
+      close,
+      pages: async () => [{
+        target: () => ({ createCDPSession: async () => ({ send: async () => ({ cookies: [{
+          name: "iframe_auth_cookie", value: token, domain: "console.cloud.ru",
+        }] }) }) }),
+        goto: async () => {},
+      }],
+    };
+    const provider = makeProvider(true);
+    const pending = provider.getAccessToken();
+    while (!launch.mock.calls.length) await Promise.resolve();
+    await provider.signOut();
+    finishLaunch(browser);
+    await expect(pending).rejects.toBeInstanceOf(NotSignedInError);
+    expect(close).toHaveBeenCalled();
+    expect(await provider.isSignedIn()).toBe(false);
   });
 });

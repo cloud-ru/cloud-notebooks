@@ -20,7 +20,7 @@ export interface StatusPresentation {
 const RUNNING: StatusPresentation = {
   icon: "vm-running",
   color: "charts.green",
-  label: "Подключен",
+  label: "Запущен",
   isRunning: true,
   isPaused: false,
   isBusy: false,
