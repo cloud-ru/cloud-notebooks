@@ -23,11 +23,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/cloud-ru/cloudru-jupyter-vscode"
+    "url": "https://github.com/cloud-ru/cloud-notebooks.git"
   },
-  "homepage": "https://github.com/cloud-ru/cloudru-jupyter-vscode#readme",
+  "homepage": "https://github.com/cloud-ru/cloud-notebooks#readme",
   "bugs": {
-    "url": "https://github.com/cloud-ru/cloudru-jupyter-vscode/issues"
+    "url": "https://github.com/cloud-ru/cloud-notebooks/issues"
   },
   "activationEvents": [
     "onView:cloudruNotebooks"

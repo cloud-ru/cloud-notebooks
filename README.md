@@ -12,6 +12,7 @@ run cells on the remote cloud kernel, browse pod files over SSH, or go full Remo
 [![Cursor](https://img.shields.io/badge/Cursor-supported-4B0082.svg)](https://cursor.com)
 [![Node](https://img.shields.io/badge/Node-%E2%89%A522-339933.svg?logo=nodedotjs)](https://nodejs.org/)
 [![pnpm](https://img.shields.io/badge/pnpm-10-F69220.svg?logo=pnpm)](https://pnpm.io/)
+[![CI](https://github.com/cloud-ru/cloud-notebooks/actions/workflows/ci.yml/badge.svg)](https://github.com/cloud-ru/cloud-notebooks/actions/workflows/ci.yml)
 
 [English](README.md) · [Русский](README.ru.md)
 

@@ -7,14 +7,14 @@ development workflow and project conventions.
 
 - Node.js ≥ 22 and pnpm 10 (enable via `corepack enable`, or see
   [docs/development.md](docs/development.md#требования))
-- VS Code ≥ 1.90 or a compatible fork (Cursor, VSCodium)
+- VS Code ≥ 1.101 or a compatible fork (Cursor, VSCodium)
 - A local Chrome/Chromium/Edge executable for the sign-in flow
 
 ## Getting started
 
 ```bash
 git clone <your-fork-url>
-cd ntb-vscodeextension
+cd cloud-notebooks
 pnpm install
 pnpm bundle:watch   # in one terminal — rebuilds dist/extension.js on change
 ```
@@ -53,7 +53,7 @@ pnpm bundle      # a clean production-shaped bundle
 4. If your change affects user-visible behavior, add the manual smoke checklist results from
    [docs/development.md](docs/development.md#ручной-smoke-чек-лист-extension-development-host) to the
    pull request description.
-5. Open a merge request with a short summary of what changed and why.
+5. Open a pull request with a short summary of what changed and why.
 
 Commits follow [Conventional Commits](https://www.conventionalcommits.org/) style
 (`feat:`, `fix:`, `docs:`, …).
