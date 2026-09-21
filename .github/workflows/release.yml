@@ -28,7 +28,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Install pnpm
-        uses: pnpm/action-setup@0609f0983b7a228f052f81ef4c3d6510cae254ad
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
           version: ${{ env.PNPM_VERSION }}
 
