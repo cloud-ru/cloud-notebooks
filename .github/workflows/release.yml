@@ -2,11 +2,14 @@ name: Release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - "v*"
 
 permissions:
   contents: write
+  packages: write
 
 concurrency:
   group: release-${{ github.ref }}
@@ -15,6 +18,8 @@ concurrency:
 env:
   PNPM_VERSION: 10.22.0
   VSCE_VERSION: 3.9.2
+  ORAS_VERSION: 1.3.4
+  ORAS_SHA256: f27adb935022d94df8dc77719c322dda592c78a0d57a6f7dcdd8d900b248c454
   COREPACK_ENABLE_DOWNLOAD_PROMPT: 0
 
 jobs:
@@ -47,15 +52,78 @@ jobs:
       - name: Run unit tests
         run: pnpm test
 
+      - name: Set release version
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_version="$(node -p "require('./package.json').version")"
+          if [[ "${GITHUB_REF_TYPE}" == "branch" ]]; then
+            version="$(node -e '
+              const version = require("./package.json").version;
+              const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
+              if (!match) throw new Error(`Expected major.minor.patch version, got ${version}`);
+              console.log(`${match[1]}.${match[2]}.${process.env.GITHUB_RUN_NUMBER}`);
+            ')"
+            npm pkg set "version=${version}"
+            tag="main-${GITHUB_RUN_NUMBER}"
+          else
+            version="${package_version}"
+            tag="${GITHUB_REF_NAME}"
+            if [[ "${tag}" != "v${version}" ]]; then
+              echo "Tag ${tag} does not match package version v${version}" >&2
+              exit 1
+            fi
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "vsix=$(node -p "const p = require('./package.json'); p.name + '-' + p.version + '.vsix'")" >> "${GITHUB_OUTPUT}"
+
       - name: Package extension
-        run: pnpm dlx "@vscode/vsce@${VSCE_VERSION}" package
+        env:
+          VSIX_FILE: ${{ steps.release.outputs.vsix }}
+        run: |
+          pnpm dlx "@vscode/vsce@${VSCE_VERSION}" package
+          test -s "${VSIX_FILE}"
+
+      - name: Install ORAS
+        run: |
+          archive="${RUNNER_TEMP}/oras_${ORAS_VERSION}_linux_amd64.tar.gz"
+          curl -fsSLo "${archive}" "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz"
+          echo "${ORAS_SHA256}  ${archive}" | sha256sum --check -
+          tar -xzf "${archive}" -C "${RUNNER_TEMP}" oras
+          echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
+
+      - name: Publish VSIX to GitHub Packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          VSIX_FILE: ${{ steps.release.outputs.vsix }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_ref="ghcr.io/${GITHUB_REPOSITORY,,}-vsix"
+          tags="${RELEASE_TAG}"
+          if [[ "${GITHUB_REF_TYPE}" == "branch" ]]; then
+            tags="${tags},main"
+          fi
+          printf '%s' "${GH_TOKEN}" | oras login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+          oras push \
+            --artifact-type application/vnd.vscode.vsix \
+            --annotation "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --annotation "org.opencontainers.image.description=Cloud.ru Distributed Train VSIX" \
+            "${package_ref}:${tags}" "${VSIX_FILE}:application/zip"
 
       - name: Create or update GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          VSIX_FILE: ${{ steps.release.outputs.vsix }}
         run: |
-          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            gh release upload "${GITHUB_REF_NAME}" ./*.vsix --clobber
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            gh release upload "${RELEASE_TAG}" "${VSIX_FILE}" --clobber
+          elif [[ "${GITHUB_REF_TYPE}" == "branch" ]]; then
+            gh release create "${RELEASE_TAG}" "${VSIX_FILE}" --target "${GITHUB_SHA}" --generate-notes --latest
           else
-            gh release create "${GITHUB_REF_NAME}" ./*.vsix --generate-notes --verify-tag
+            gh release create "${RELEASE_TAG}" "${VSIX_FILE}" --generate-notes --verify-tag
           fi
