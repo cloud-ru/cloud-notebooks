@@ -131,16 +131,38 @@ code --install-extension cloudru-jupyter-vscode-<версия>.vsix
 
 ## Публикация
 
-Для широкой раздачи внутри компании обычно достаточно `.vsix` через внутренний артефакт-стор + ручная
-установка. Если нужна публичная публикация:
+Workflow `.github/workflows/release.yml` после каждого обновления `main` проверяет типы и тесты,
+собирает `.vsix` и создаёт GitHub Release с тегом `main-<номер запуска>`. Внутри `.vsix` версия
+`major.minor.<номер запуска>`: `major.minor` берутся из `package.json`. Новый выпуск помечается как
+Latest; файл можно скачать со страницы Releases. Тот же `.vsix` публикуется в GitHub Packages как
+OCI-артефакт `ghcr.io/cloud-ru/cloud-notebooks-vsix` с тегами `main-<номер запуска>` и `main`.
+Раздел Packages не хранит `.vsix` как самостоятельный тип пакета: для скачивания оттуда нужен ORAS.
+Ручной push тега `v<версия из package.json>` по-прежнему создаёт отдельный выпуск и версию пакета.
+Для работы workflow не нужен PAT: он использует `GITHUB_TOKEN`.
+
+После мержа проверьте в GitHub: **Actions → Release** (успешный запуск), **Releases → Latest**
+(файл `.vsix`) и **Packages → cloud-notebooks-vsix** (тег `main`). Репозиторий приватный; пакет
+по умолчанию также приватный. Владельцу репозитория нужно разрешить GitHub Actions и убедиться, что
+политика организации допускает права `contents: write` и `packages: write`, запрошенные в workflow.
+Если пакет с таким именем уже создан отдельно от репозитория, в его настройках надо дать этому
+репозиторию доступ на запись для Actions. Дополнительные secrets не нужны.
+
+Скачать актуальный `.vsix` из Packages при наличии доступа можно так:
+
+```bash
+oras login ghcr.io  # учётные данные GitHub с правом read:packages
+oras pull ghcr.io/cloud-ru/cloud-notebooks-vsix:main
+```
+
+Публикация в каталоги расширений настраивается отдельно:
 
 - **VS Code Marketplace** (Azure DevOps): создать publisher (поле `publisher` в `package.json` должно
   совпадать), завести PAT со scope **Marketplace → Manage**, затем
   `pnpm dlx @vscode/vsce publish`. Версию нужно поднимать на каждый релиз.
 - **Open VSX** (для VSCodium / Cursor и других форков): `pnpm dlx ovsx publish <файл>.vsix -p <token>`.
 
-CI перед публикацией должен прогонять `typecheck` + `test` + `package` (используйте `corepack enable`,
-чтобы подхватить закреплённую версию pnpm).
+Оба GitHub Actions workflow перед упаковкой прогоняют `typecheck` и `test`. Для локальной упаковки
+используйте закреплённую в `.github/workflows/release.yml` версию `@vscode/vsce`.
 
 ---
 
