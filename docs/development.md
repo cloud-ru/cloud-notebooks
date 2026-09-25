@@ -131,28 +131,20 @@ code --install-extension cloudru-jupyter-vscode-<версия>.vsix
 
 ## Публикация
 
-Workflow `.github/workflows/release.yml` после каждого обновления `main` проверяет типы и тесты,
-собирает `.vsix` и создаёт GitHub Release с тегом `main-<номер запуска>`. Внутри `.vsix` версия
-`major.minor.<номер запуска>`: `major.minor` берутся из `package.json`. Новый выпуск помечается как
-Latest; файл можно скачать со страницы Releases. Тот же `.vsix` публикуется в GitHub Packages как
-OCI-артефакт `ghcr.io/cloud-ru/cloud-notebooks-vsix` с тегами `main-<номер запуска>` и `main`.
-Раздел Packages не хранит `.vsix` как самостоятельный тип пакета: для скачивания оттуда нужен ORAS.
-Ручной push тега `v<версия из package.json>` по-прежнему создаёт отдельный выпуск и версию пакета.
-Для работы workflow не нужен PAT: он использует `GITHUB_TOKEN`.
+Чтобы выпустить новую версию, измените `version` в `package.json` на следующий `MAJOR.MINOR.PATCH`,
+обновите `CHANGELOG.md` и влейте PR в `main`. Workflow `.github/workflows/release.yml` сравнит версию
+с предыдущим состоянием `main`, проверит типы и тесты, соберёт `.vsix` и создаст GitHub Release
+`vMAJOR.MINOR.PATCH` с файлом той же версии. Если версия не изменилась, новый Release не создаётся.
+Workflow сам создаёт тег `vMAJOR.MINOR.PATCH` для коммита из `main`. VSIX скачивается со страницы
+Releases; GitHub Packages для него не используется.
 
-После мержа проверьте в GitHub: **Actions → Release** (успешный запуск), **Releases → Latest**
-(файл `.vsix`) и **Packages → cloud-notebooks-vsix** (тег `main`). Репозиторий приватный; пакет
-по умолчанию также приватный. Владельцу репозитория нужно разрешить GitHub Actions и убедиться, что
-политика организации допускает права `contents: write` и `packages: write`, запрошенные в workflow.
-Если пакет с таким именем уже создан отдельно от репозитория, в его настройках надо дать этому
-репозиторию доступ на запись для Actions. Дополнительные secrets не нужны.
+После мержа с новой версией проверьте **Actions → Release** и **Releases → Latest** (файл `.vsix`).
+Workflow использует `GITHUB_TOKEN` с правом `contents: write`; дополнительные secrets не нужны.
 
-Скачать актуальный `.vsix` из Packages при наличии доступа можно так:
-
-```bash
-oras login ghcr.io  # учётные данные GitHub с правом read:packages
-oras pull ghcr.io/cloud-ru/cloud-notebooks-vsix:main
-```
+Ранее опубликованный `cloud-notebooks-vsix` остаётся в Packages до отдельного удаления. Администратору
+пакета нужно открыть страницу организации **cloud-ru → Packages → cloud-notebooks-vsix → Package
+settings → Danger Zone → Delete this package**. Новый workflow не создаёт пакеты. После появления
+`v0.1.1` можно также удалить старый Release и тег `main-1` в GitHub.
 
 Публикация в каталоги расширений настраивается отдельно:
 
