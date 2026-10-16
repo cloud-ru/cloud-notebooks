@@ -14,6 +14,7 @@ import { NotebookTreeItem, type NotebooksTreeProvider } from "../views/notebooks
 import { buildNotebookActions } from "../views/notebookActions";
 import type { NotebookViewController } from "../jupyter/notebookController";
 import type { CloudruServerProvider } from "../jupyter/serverProvider";
+import { toAbsoluteNotebookUrl } from "../jupyter/notebookUrl";
 import type { SshController } from "../ssh/sshController";
 
 /** Description length cap enforced by the console's edit form. */
@@ -332,7 +333,8 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
       if (!choice) return;
       if (item.contextGeneration !== session.getGeneration()) return;
       const ws = session.get();
-      const base = url.endsWith("/") ? url : `${url}/`;
+      const absolute = toAbsoluteNotebookUrl(url);
+      const base = absolute.endsWith("/") ? absolute : `${absolute}/`;
       const page = choice.label === LAB ? "lab/" : choice.label === TREE ? "tree/" : "";
       const suffix = choice.label !== APP && ws ? `?ws=${encodeURIComponent(ws.workspaceId)}` : "";
       await vscode.env.openExternal(vscode.Uri.parse(`${base}${page}${suffix}`));

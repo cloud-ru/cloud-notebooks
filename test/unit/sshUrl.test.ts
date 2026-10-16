@@ -48,5 +48,6 @@ describe("regionTypeFromNotebookUrl", () => {
     expect(regionTypeFromNotebookUrl("https://k2-nb.ai.cloud.ru/notebook/abc/")).toBe("MT");
     expect(regionTypeFromNotebookUrl(undefined)).toBe("MT");
     expect(regionTypeFromNotebookUrl("not a url")).toBe("MT");
+    expect(regionTypeFromNotebookUrl("my-nb.sr004-nb.ai.cloud.ru")).toBe("MT");
   });
 });
