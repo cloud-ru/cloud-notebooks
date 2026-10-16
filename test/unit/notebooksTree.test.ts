@@ -23,6 +23,7 @@ vi.mock("../../src/console/tokenProvider", () => ({ NotSignedInError: class exte
 
 import { SessionStore } from "../../src/session/sessionStore";
 import { NotebookTreeItem, NotebooksTreeProvider } from "../../src/views/notebooksTree";
+import { NotSignedInError } from "../../src/console/tokenProvider";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -52,7 +53,7 @@ function setup() {
   const tree = new NotebooksTreeProvider({
     client: client as never, session,
     favorites: { has: () => false } as never,
-    isSignedIn: async () => signedIn,
+    isSignedIn: () => signedIn,
     logger: { error: vi.fn() } as never,
   });
   const view = { message: "" };
@@ -168,5 +169,71 @@ describe("NotebooksTreeProvider context", () => {
     requests[0].pending.resolve([notebook("old")]);
     expect(await oldLoad).toEqual([]);
     expect((await tree.getChildren()).map((item) => item.notebook.uid)).toEqual(["new"]);
+  });
+});
+
+describe("NotebooksTreeProvider signed-out view", () => {
+  // VS Code hides the viewsWelcome content (with its «Войти» / «Выбрать воркспейс» button) whenever
+  // the tree has a message, so every signed-out or workspace-less state must leave it empty.
+
+  it("does not cover the sign-in welcome after the session expires", async () => {
+    const { session, tree, view, requests, signOut } = setup();
+    await session.set({ workspaceId: "A", workspaceName: "A" });
+    const load = tree.getChildren();
+    await Promise.resolve();
+    requests[0].pending.resolve([notebook("one")]);
+    await load;
+    signOut();
+    tree.refresh(); // extension.ts refreshes the tree at the end of its auth-change handler
+    expect(view.message).toBe("");
+    expect(await tree.getChildren()).toEqual([]);
+    expect(view.message).toBe("");
+  });
+
+  it("drops the loading state when a load ends with NotSignedInError", async () => {
+    const { session, tree, view, requests } = setup();
+    await session.set({ workspaceId: "A", workspaceName: "A" });
+    const load = tree.getChildren();
+    await Promise.resolve();
+    expect(view.message).toContain("Загружаем");
+    requests[0].pending.reject(new NotSignedInError());
+    expect(await load).toEqual([]);
+    expect(view.message).not.toContain("Загружаем");
+  });
+
+  it("hides the filter summary while signed out", async () => {
+    const { session, tree, view, requests, signOut } = setup();
+    await session.set({ workspaceId: "A", workspaceName: "A" });
+    const load = tree.getChildren();
+    await Promise.resolve();
+    requests[0].pending.resolve([notebook("one")]);
+    await load;
+    tree.setSearch("one");
+    expect(view.message).toContain("1 из 1");
+    signOut();
+    expect(view.message).toBe("");
+  });
+
+  it("does not show a loading message without a workspace", async () => {
+    const { tree, view, client } = setup();
+    tree.refresh();
+    expect(view.message).toBe("");
+    expect(await tree.getChildren()).toEqual([]);
+    expect(client.listNotebooks).not.toHaveBeenCalled();
+    expect(view.message).toBe("");
+  });
+
+  it("shows the signing-in line only while the list is still empty", async () => {
+    const { session, tree, view, requests } = setup();
+    await session.set({ workspaceId: "A", workspaceName: "A" });
+    const load = tree.getChildren();
+    await Promise.resolve();
+    tree.setSignInMessage("Выполняется вход в Cloud.ru…");
+    expect(view.message).toContain("Выполняется вход");
+    requests[0].pending.resolve([notebook("one")]);
+    await load;
+    expect(view.message).not.toContain("Выполняется вход");
+    tree.refresh();
+    expect(view.message).not.toContain("Выполняется вход");
   });
 });
