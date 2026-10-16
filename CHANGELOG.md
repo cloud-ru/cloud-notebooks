@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-16
+
+### Fixed
+
+- "Открыть в VS Code", remote kernels and "Открыть в браузере" no longer fail with `Invalid URL`
+  when the backend returns the notebook URL as a bare host without a scheme (new format).
+
 ## [0.1.1] - 2026-09-25
 
 ### Changed
