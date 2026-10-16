@@ -2,7 +2,7 @@
   "name": "cloudru-jupyter-vscode",
   "displayName": "Cloud.ru Distributed Train Notebooks",
   "description": "Sign in to Cloud.ru, browse Jupyter Server notebooks created in the Distributed Train console, and open them.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "cloudru",
   "license": "Apache-2.0",
   "packageManager": "pnpm@10.22.0",
