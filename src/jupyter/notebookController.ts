@@ -113,8 +113,8 @@ export class NotebookViewController {
     if (!target || !this.isCurrent(notebook.uid, generation, version)) return undefined;
     const connection = this.connections.get(notebook.uid) ?? new SshConnection(target);
     this.connections.set(notebook.uid, connection);
-    const { prefix } = parseNotebookUrl(notebook.url ?? "");
     try {
+      const { prefix } = parseNotebookUrl(notebook.url ?? "");
       const localPort = await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: `Подключение к «${notebook.name}»…` },
         () =>
