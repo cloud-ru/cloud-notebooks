@@ -2,7 +2,7 @@
   "name": "cloudru-jupyter-vscode",
   "displayName": "Cloud.ru Distributed Train Notebooks",
   "description": "Sign in to Cloud.ru, browse Jupyter Server notebooks created in the Distributed Train console, and open them.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "cloudru",
   "license": "Apache-2.0",
   "packageManager": "pnpm@10.22.0",
@@ -94,7 +94,7 @@
       }
     ],
     "commands": [
-      { "command": "cloudru.signIn", "title": "Войти", "category": "Cloud.ru" },
+      { "command": "cloudru.signIn", "title": "Войти", "category": "Cloud.ru", "icon": "$(sign-in)" },
       { "command": "cloudru.signOut", "title": "Выйти", "category": "Cloud.ru" },
       { "command": "cloudru.selectWorkspace", "title": "Выбрать воркспейс", "category": "Cloud.ru" },
       {
@@ -146,6 +146,11 @@
     ],
     "menus": {
       "view/title": [
+        {
+          "command": "cloudru.signIn",
+          "when": "view == cloudruNotebooks && !cloudru.authenticated",
+          "group": "navigation@1"
+        },
         {
           "command": "cloudru.refreshNotebooks",
           "when": "view == cloudruNotebooks && cloudru.authenticated",
@@ -283,31 +288,43 @@
       "title": "Cloud.ru Distributed Train",
       "properties": {
         "cloudru.console.apiBaseUrl": {
+          "scope": "application",
           "type": "string",
           "default": "https://console.cloud.ru/aicloud/ui",
           "description": "Base URL of the Cloud.ru console UI backend used for the notebooks list."
         },
         "cloudru.console.url": {
+          "scope": "application",
           "type": "string",
           "default": "https://console.cloud.ru/",
           "description": "Console URL opened in the sign-in browser window to capture the session token."
         },
+        "cloudru.console.keepSessionAlive": {
+          "scope": "application",
+          "type": "boolean",
+          "default": true,
+          "description": "Refresh the Cloud.ru session in the background (a short headless browser run each time the console token expires, every few minutes) so it does not time out while VS Code is open, even when the window is not focused. Pauses after 8 hours without activity in VS Code, so an unattended machine still times out. When disabled, the token is refreshed only when a request needs it."
+        },
         "cloudru.notebook.chromePath": {
+          "scope": "application",
           "type": "string",
           "default": "",
           "description": "Path to a Chrome/Chromium/Edge executable used for the one-time notebook sign-in. Leave empty to auto-detect."
         },
         "cloudru.ssh.privateKeyPath": {
+          "scope": "application",
           "type": "string",
           "default": "",
           "description": "Path to the Distributed Train SSH private key (downloaded from the console SSH dialog). Used to browse notebook files over SFTP."
         },
         "cloudru.ssh.host": {
+          "scope": "application",
           "type": "string",
           "default": "ssh-jupyter.ai.cloud.ru",
           "description": "Default SSH gateway host, used only when you enter just an account id. Normally the host (and port) are taken verbatim from the connection command you paste from the console SSH dialog — it is region-dependent, e.g. ssh-jupyter.ai.cloud.ru or ssh-<region>-jupyter.ai.cloud.ru."
         },
         "cloudru.ssh.port": {
+          "scope": "application",
           "type": "number",
           "default": 2222,
           "description": "SSH gateway port."

@@ -23,7 +23,8 @@ run cells on the remote cloud kernel, browse pod files over SSH, or go full Remo
 ## Features
 
 - **Cloud.ru sign-in via SSO** — no API keys, no OAuth app registration. The extension captures the
-  same session token the web console uses.
+  same session token the web console uses and keeps the session alive in the background while VS Code
+  is open.
 - **Notebook explorer** for your workspace with live statuses, search by name, author/status
   filters, and favorites. Description editing is one command away.
 - **Open the notebook web UI inside VS Code** — JupyterLab, marimo, code-server images and more,
@@ -90,11 +91,14 @@ from the `…` menu next to each notebook.
 
 ## Settings
 
+All settings are user-level: values in a workspace's `.vscode/settings.json` are ignored.
+
 | Key | Default | Purpose |
 |-----|---------|---------|
 | `cloudru.console.apiBaseUrl` | `https://console.cloud.ru/aicloud/ui` | Console web API base URL |
 | `cloudru.console.url` | `https://console.cloud.ru/` | Console URL opened for sign-in |
 | `cloudru.notebook.chromePath` | *(auto-detect)* | Browser executable used for the one-time sign-in |
+| `cloudru.console.keepSessionAlive` | `true` | Refresh the session in the background so it does not expire while VS Code is open (pauses after 8 hours without activity) |
 | `cloudru.ssh.privateKeyPath` | *(empty)* | Distributed Train private key (files, kernels, IDE) |
 | `cloudru.ssh.host` | `ssh-jupyter.ai.cloud.ru` | Fallback gateway host when only an account id is given |
 | `cloudru.ssh.port` | `2222` | Gateway port |

@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-16
+
+### Added
+
+- Background session keep-alive: the console token is re-minted silently when it falls due, whether
+  or not the window is focused, so the Cloud.ru SSO session no longer idles out while VS Code is open
+  and API calls rarely wait on a headless browser. Transient failures (offline, busy browser profile)
+  retry with back-off instead of signing out. Pauses after 8 hours without activity in VS Code, so an
+  unattended machine still lets the session time out. Controlled by
+  `cloudru.console.keepSessionAlive` (on by default).
+
+### Security
+
+- The sign-in browser profile now keeps its cookies (the Cloud.ru SSO session included) in the OS
+  secret store — Keychain, libsecret or KWallet — instead of puppeteer's mock keychain, which
+  encrypted them with a fixed, publicly known key. Cookies saved by earlier versions are deleted once,
+  so macOS and Linux users sign in again once after updating (the prompt says why). Windows already
+  used DPAPI and is unaffected.
+- All `cloudru.*` settings are now user-level only (`application` scope): a repository's
+  `.vscode/settings.json` can no longer point the console API (and the token sent to it), the sign-in
+  page, the browser executable, or the SSH key and gateway somewhere else.
+- Silent token refreshes accept only a token for the account the user signed in with, and prefer the
+  console's own cookie over one set on a parent domain, so a cookie planted by another `*.cloud.ru`
+  site cannot switch the extension to a different account.
+
+### Fixed
+
+- "Открыть в VS Code", remote kernels and "Открыть в браузере" no longer fail with `Invalid URL`
+  when the backend returns the notebook URL as a bare host without a scheme (new format).
+- An expired session no longer leaves the Notebooks view stuck on "Загружаем ноутбуки…" with nothing
+  clickable: the view shows "Сессия Cloud.ru истекла" with a sign-in button, the view title gets a
+  «Войти» button, and the status bar shows "Cloud.ru: войдите снова".
+- "Выполняется вход в Cloud.ru…" no longer flashes over an already loaded list on a token refresh.
+- Clicking «Войти» again while the sign-in browser window is open no longer opens a second window.
+
 ## [0.1.1] - 2026-09-25
 
 ### Changed
