@@ -21,7 +21,8 @@ export interface NotebooksTreeDeps {
   client: ConsoleApiClient;
   session: SessionStore;
   favorites: FavoritesStore;
-  isSignedIn: () => Promise<boolean>;
+  /** Synchronous so the view message can be cleared in the same tick the auth state flips. */
+  isSignedIn: () => boolean;
   logger: Logger;
 }
 
@@ -95,11 +96,20 @@ export class NotebooksTreeProvider implements vscode.TreeDataProvider<NotebookTr
 
   refresh(): void {
     this.syncContext();
-    this.state = hasData(this.state)
-      ? { ...this.state, kind: "refreshing" }
-      : { kind: "loading", generation: this.state.generation };
+    if (!this.canLoad()) {
+      // Signed out or no workspace: nothing will load, so a "loading" state would never settle.
+      this.state = { kind: "idle", generation: this.state.generation };
+    } else {
+      this.state = hasData(this.state)
+        ? { ...this.state, kind: "refreshing" }
+        : { kind: "loading", generation: this.state.generation };
+    }
     this.syncFilterIndicators();
     this.emitter.fire();
+  }
+
+  private canLoad(): boolean {
+    return this.deps.isSignedIn() && Boolean(this.deps.session.get());
   }
 
   /** Adopt an externally-fetched list (e.g. from the poll loop) and render it without refetching. */
@@ -206,10 +216,11 @@ export class NotebooksTreeProvider implements vscode.TreeDataProvider<NotebookTr
     if (element) return []; // flat list
     this.syncContext();
     const generation = this.state.generation;
-    if (!(await this.deps.isSignedIn())) return [];
-    if (generation !== this.deps.session.getGeneration()) return [];
     const ws = this.deps.session.get();
-    if (!ws) return [];
+    if (!ws || !this.deps.isSignedIn()) {
+      this.settleIdle();
+      return [];
+    }
 
     if (this.state.kind !== "ready") {
       this.state = hasData(this.state)
@@ -224,7 +235,10 @@ export class NotebooksTreeProvider implements vscode.TreeDataProvider<NotebookTr
       } catch (err) {
         if (generation !== this.deps.session.getGeneration()) return [];
         if (this.state !== requestState) return this.render();
-        if (err instanceof NotSignedInError) return []; // provider flips auth + prompts; welcome takes over
+        if (err instanceof NotSignedInError) {
+          this.settleIdle(); // provider flips auth + prompts; the welcome view takes over
+          return [];
+        }
         const message = err instanceof ApiError ? err.message : `Не удалось загрузить ноутбуки: ${String(err)}`;
         this.deps.logger.error("listNotebooks failed", err);
         this.state = hasData(this.state)
@@ -236,6 +250,13 @@ export class NotebooksTreeProvider implements vscode.TreeDataProvider<NotebookTr
       }
     }
     return this.render();
+  }
+
+  /** Nothing is going to load: drop a pending "loading" so its message stops covering the welcome. */
+  private settleIdle(): void {
+    if (this.state.kind === "idle") return;
+    this.state = { kind: "idle", generation: this.state.generation };
+    this.syncFilterIndicators();
   }
 
   private render(): NotebookTreeItem[] {
@@ -270,9 +291,14 @@ export class NotebooksTreeProvider implements vscode.TreeDataProvider<NotebookTr
       const error = this.state.kind === "error" || this.state.kind === "stale" ? this.state.error : undefined;
       const stateMessage = this.state.kind === "loading" ? "Загружаем ноутбуки…" :
         this.state.kind === "stale" ? `Не удалось обновить; показаны сохранённые данные. ${error}` : error;
+      // A silent token refresh behind rows already on screen needs no explanation; an empty view does.
+      const signInMessage = hasData(this.state) ? undefined : this.signInMessage;
       const filterMessage = filtered ? `${describeFilter(this.filter)} · ${visibleCount} из ${notebooks.length}` : undefined;
-      this.view.message = [this.signInMessage ?? stateMessage, this.preflightWarning, filterMessage]
-        .filter(Boolean).join(" · ");
+      // VS Code hides the welcome view whenever a message is set, and while signed out or without a
+      // workspace the welcome view holds the only way forward (its sign-in / pick-workspace button).
+      this.view.message = this.canLoad()
+        ? [signInMessage ?? stateMessage, this.preflightWarning, filterMessage].filter(Boolean).join(" · ")
+        : "";
     }
     void vscode.commands.executeCommand("setContext", "cloudru.hasFilter", filtered);
     void vscode.commands.executeCommand("setContext", "cloudru.loading", this.state.kind === "idle" || this.state.kind === "loading");
