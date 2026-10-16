@@ -43,7 +43,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     client,
     session,
     favorites,
-    isSignedIn: () => auth.isSignedIn(),
+    isSignedIn: () => auth.signedIn,
     logger,
   });
   context.subscriptions.push(tree);
@@ -84,6 +84,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const statusBar = new CloudruStatusBar({
     isSignedIn: () => auth.isSignedIn(),
+    isSessionExpired: () => auth.sessionExpired,
     getWorkspace: () => session.get(),
   });
   context.subscriptions.push(statusBar);
@@ -143,6 +144,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   });
   context.subscriptions.push(autoRefresh);
   autoRefresh.start();
+  auth.startKeepAlive();
 
   logger.info("Cloud.ru Distributed Train extension activated.");
 }
