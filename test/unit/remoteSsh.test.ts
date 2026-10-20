@@ -11,7 +11,7 @@ import { formatHostStanza, upsertSshConfigBlock } from "../../src/ssh/sshConfigF
 const entry = {
   host: "ssh-jupyter.ai.cloud.ru",
   port: 2222,
-  username: "nb.ai0000000-00000",
+  username: "nb.ai0000000-00001",
   identityFile: "/keys/distributed train key (1).txt",
 };
 

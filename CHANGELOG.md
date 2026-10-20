@@ -83,3 +83,6 @@ First public-ready release of the extension.
   between two different notebooks is rejected explicitly instead of misbehaving.
 - Transient notebook statuses show an accurate "status transition in progress" reason in action
   menus rather than a misleading "not running".
+
+[Unreleased]: https://github.com/cloud-ru/cloud-notebooks/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/cloud-ru/cloud-notebooks/releases/tag/v0.1.2

@@ -146,16 +146,12 @@ code --install-extension cloudru-jupyter-vscode-<версия>.vsix
 обновите `CHANGELOG.md` и влейте PR в `main`. Workflow `.github/workflows/release.yml` сравнит версию
 с предыдущим состоянием `main`, проверит типы и тесты, соберёт `.vsix` и создаст GitHub Release
 `vMAJOR.MINOR.PATCH` с файлом той же версии. Если версия не изменилась, новый Release не создаётся.
+Первый push в пустой репозиторий (или force-push) сравнивать не с чем — тогда выпускается текущая версия.
 Workflow сам создаёт тег `vMAJOR.MINOR.PATCH` для коммита из `main`. VSIX скачивается со страницы
 Releases; GitHub Packages для него не используется.
 
 После мержа с новой версией проверьте **Actions → Release** и **Releases → Latest** (файл `.vsix`).
 Workflow использует `GITHUB_TOKEN` с правом `contents: write`; дополнительные secrets не нужны.
-
-Ранее опубликованный `cloud-notebooks-vsix` остаётся в Packages до отдельного удаления. Администратору
-пакета нужно открыть страницу организации **cloud-ru → Packages → cloud-notebooks-vsix → Package
-settings → Danger Zone → Delete this package**. Новый workflow не создаёт пакеты. После появления
-`v0.1.1` можно также удалить старый Release и тег `main-1` в GitHub.
 
 Публикация в каталоги расширений настраивается отдельно:
 

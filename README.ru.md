@@ -9,10 +9,11 @@
 всё из редактора.
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![VS Code](https://img.shields.io/badge/VS%20Code-%5E1.90-007ACC.svg?logo=visualstudiocode)](https://code.visualstudio.com/)
+[![VS Code](https://img.shields.io/badge/VS%20Code-%5E1.101-007ACC.svg?logo=visualstudiocode)](https://code.visualstudio.com/)
 [![Cursor](https://img.shields.io/badge/Cursor-supported-4B0082.svg)](https://cursor.com)
 [![Node](https://img.shields.io/badge/Node-%E2%89%A522-339933.svg?logo=nodedotjs)](https://nodejs.org/)
 [![pnpm](https://img.shields.io/badge/pnpm-10-F69220.svg?logo=pnpm)](https://pnpm.io/)
+[![CI](https://github.com/cloud-ru/cloud-notebooks/actions/workflows/ci.yml/badge.svg)](https://github.com/cloud-ru/cloud-notebooks/actions/workflows/ci.yml)
 
 [English](README.md) · [Русский](README.ru.md)
 
@@ -43,13 +44,31 @@
 
 Войдите один раз с учётной записью Cloud.ru (SSO в браузере). Расширение показывает список
 Jupyter Server и управляет ноутбуками, а к запущенным ноутбукам подключается по SSH — для
-встроенного веб-интерфейса, удалённого ядра, файлов и Remote-SSH.
+встроенного веб-интерфейса, удалённого ядра, файлов и Remote-SSH. Телеметрию расширение не
+собирает; что хранится локально и к каким хостам идут запросы — в [SECURITY.md](SECURITY.md).
+
+---
+
+## Установка
+
+Расширение распространяется файлом `.vsix`, приложенным к каждому
+[релизу на GitHub](https://github.com/cloud-ru/cloud-notebooks/releases/latest).
+
+1. Скачайте `cloudru-jupyter-vscode-<версия>.vsix` из последнего релиза.
+2. В VS Code или Cursor: вью **Extensions** → меню «…» → **Install from VSIX…** или выполните
+   `code --install-extension cloudru-jupyter-vscode-<версия>.vsix`.
+
+Нужны VS Code ≥ 1.101 (или сборка Cursor с Node.js 22 в extension host), локальный
+Chrome/Chromium/Edge для входа и учётная запись Cloud.ru с доступом к воркспейсу Distributed Train.
+Для удалённого ядра используется
+[расширение Jupyter](https://marketplace.visualstudio.com/items?itemName=ms-toolsai.jupyter), для
+полного IDE-режима — любое расширение Remote-SSH.
 
 ---
 
 ## Быстрый старт (разработка)
 
-Требования: Node.js ≥ 22, pnpm 10 (`corepack enable`), VS Code ≥ 1.90 / Cursor, локальный
+Требования: Node.js ≥ 22, pnpm 10 (`corepack enable`), VS Code ≥ 1.101 / Cursor, локальный
 Chrome/Chromium/Edge для входа.
 
 ```bash
@@ -106,7 +125,7 @@ pnpm bundle       # разовая сборка
 | `cloudru.notebook.chromePath` | `` (автоопределение) | Путь к Chrome/Chromium/Edge для входа |
 | `cloudru.console.keepSessionAlive` | `true` | Продлевать сессию в фоне, чтобы она не истекала, пока открыт VS Code (пауза после 8 часов без активности) |
 | `cloudru.ssh.privateKeyPath` | `` | SSH-ключ Distributed Train (для файлов, ядра, IDE) |
-| `cloudru.ssh.host` | `ssh-jupyter.ai.cloud.ru` | Дефолтный хост SSH-шлюза (обычно берётся из вставленной SSH-команды) |
+| `cloudru.ssh.host` | `ssh-jupyter.ai.cloud.ru` | Резервный хост SSH-шлюза (используется, когда введён только id аккаунта) |
 | `cloudru.ssh.port` | `2222` | Порт SSH-шлюза |
 
 ---
@@ -121,8 +140,9 @@ pnpm bundle       # разовая сборка
 
 ## Участие в проекте
 
-Баг-репорты и пулл-реквесты приветствуются — см. [CONTRIBUTING.md](CONTRIBUTING.md).
-Вопросы безопасности: [SECURITY.md](SECURITY.md). История изменений — [CHANGELOG.md](CHANGELOG.md).
+Баг-репорты и пулл-реквесты приветствуются — см. [CONTRIBUTING.md](CONTRIBUTING.md). Участники
+проекта следуют [Кодексу поведения](CODE_OF_CONDUCT.md). Вопросы безопасности: [SECURITY.md](SECURITY.md).
+История изменений — [CHANGELOG.md](CHANGELOG.md).
 
 ---
 

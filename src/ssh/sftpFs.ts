@@ -45,7 +45,7 @@ function isChildPath(parent: string, child: string): boolean {
 
 /**
  * A `FileSystemProvider` backed by SFTP. Each `cloudru-ssh://<authority>/<path>` authority is a
- * registered notebook SSH target. File ops map straight onto SFTP; `watch` is a no-op (Phase 1).
+ * registered notebook SSH target. File ops map straight onto SFTP; `watch` is a no-op.
  */
 export class CloudruSshFsProvider implements vscode.FileSystemProvider {
   private readonly emitter = new vscode.EventEmitter<vscode.FileChangeEvent[]>();

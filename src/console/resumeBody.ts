@@ -1,5 +1,5 @@
 // Build the resume payload for POST /jup_web_app/v3/notebooks/{namespace}/resume_request.
-// Pure (no `vscode`/network) → unit-testable. Mirrors env-jupyter-server's useResumeNotebookMutation
+// Pure (no `vscode`/network) → unit-testable. Mirrors the resume request sent by the console web UI
 // (without the optional datahub image lookup, which is only a fallback).
 import type { NotebookHandlerResponse } from "../api/types";
 
@@ -37,7 +37,7 @@ export interface ResolvedHarborImage {
 /**
  * Build the resume payload. Artifact-registry images carry fixed authz/healthz labels. Harbor images
  * default to empty labels, but if `resolved` is supplied (found via the docker_images lookup) its
- * name/tag/type/labels win — matching the web app's useResumeNotebookMutation.
+ * name/tag/type/labels win — matching the resume request sent by the console web UI.
  */
 export function buildResumeBody(notebook: NotebookHandlerResponse, resolved?: ResolvedHarborImage): ResumeBody {
   const image: ResumeImage =

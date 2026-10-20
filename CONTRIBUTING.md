@@ -3,6 +3,10 @@
 Thanks for your interest in improving **Cloud.ru Distributed Train Notebooks**! This document describes the
 development workflow and project conventions.
 
+This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md). By
+participating, you are expected to uphold it; report unacceptable behavior to
+[opensource@cloud.ru](mailto:opensource@cloud.ru).
+
 ## Requirements
 
 - Node.js ≥ 22 and pnpm 10 (enable via `corepack enable`, or see
@@ -62,10 +66,11 @@ For notable user-facing changes, add an entry under `[Unreleased]` in [CHANGELOG
 
 ## Reporting issues
 
-Please include: VS Code/Cursor version, extension version, relevant lines from the
-**Output → Cloud.ru Distributed Train** channel (secrets are redacted automatically), and the steps to
-reproduce. For security issues, use the process in [SECURITY.md](SECURITY.md) instead of a public
-issue.
+Open an issue with the **Bug report** or **Feature request** form. For bugs, include the VS
+Code/Cursor version, extension version, relevant lines from the **Output → Cloud.ru Distributed
+Train** channel (secrets are redacted automatically — still review them), and the steps to
+reproduce. Never post tokens, cookies, private keys, or account/workspace identifiers. For security
+issues, use the process in [SECURITY.md](SECURITY.md) instead of a public issue.
 
 ## License
 

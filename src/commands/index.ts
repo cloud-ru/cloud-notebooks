@@ -498,8 +498,8 @@ async function enterWorkspaceIdManually(session: SessionStore, cause?: unknown):
 }
 
 /**
- * Build the resume body, looking up harbor image labels via docker_images the way the web app does
- * (2.4). Artifact-registry images need no lookup; lookup failures propagate so a resume is never
+ * Build the resume body, looking up harbor image labels via docker_images the way the web app does.
+ * Artifact-registry images need no lookup; lookup failures propagate so a resume is never
  * sent with silently empty labels — the command's error handling shows the cause to the user.
  */
 async function resolveResumeBody(

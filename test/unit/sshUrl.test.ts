@@ -35,7 +35,7 @@ describe("parseSshCommand", () => {
 
 describe("buildUsername", () => {
   it("joins server name and account id with a dot", () => {
-    expect(buildUsername("srv", "ai0000000-00000")).toBe("srv.ai0000000-00000");
+    expect(buildUsername("srv", "ai0000000-00001")).toBe("srv.ai0000000-00001");
   });
 });
 
