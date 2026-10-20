@@ -349,7 +349,7 @@
   },
   "devDependencies": {
     "@types/http-proxy": "^1.17.14",
-    "@types/node": "^20.14.0",
+    "@types/node": "^20.19.43",
     "@types/ssh2": "^1.15.0",
     "@types/vscode": "^1.90.0",
     "@vscode/jupyter-extension": "^1.1.1",
