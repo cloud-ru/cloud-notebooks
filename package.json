@@ -344,7 +344,7 @@
   },
   "dependencies": {
     "http-proxy": "^1.18.1",
-    "puppeteer-core": "^22.15.0",
+    "puppeteer-core": "^25.14.0",
     "ssh2": "^1.15.0"
   },
   "devDependencies": {
