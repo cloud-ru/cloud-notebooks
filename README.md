@@ -43,7 +43,23 @@ run cells on the remote cloud kernel, browse pod files over SSH, or go full Remo
 
 Sign in once with your Cloud.ru account (SSO in the browser). The extension lists your Jupyter
 Server notebooks and manages their lifecycle, and connects to running notebooks over SSH — for the
-embedded web UI, remote kernels, file browsing, and Remote-SSH.
+embedded web UI, remote kernels, file browsing, and Remote-SSH. It collects no telemetry; what it
+stores locally and which hosts it contacts is listed in [SECURITY.md](SECURITY.md).
+
+## Installation
+
+The extension is distributed as a `.vsix` file attached to each
+[GitHub Release](https://github.com/cloud-ru/cloud-notebooks/releases/latest).
+
+1. Download `cloudru-jupyter-vscode-<version>.vsix` from the latest release.
+2. In VS Code or Cursor: **Extensions** view → `…` menu → **Install from VSIX…**, or run
+   `code --install-extension cloudru-jupyter-vscode-<version>.vsix`.
+
+Requirements: VS Code ≥ 1.101 (or a Cursor build with Node.js 22 in its extension host), a local
+Chrome/Chromium/Edge for the one-time sign-in, and a Cloud.ru account with access to a Distributed
+Train workspace. Remote kernels use the
+[Jupyter extension](https://marketplace.visualstudio.com/items?itemName=ms-toolsai.jupyter); full IDE
+mode uses any Remote-SSH extension.
 
 ## Getting started (development)
 
@@ -66,7 +82,7 @@ pnpm bundle       # one-shot build
 ```
 
 The full guide (packaging a `.vsix`, publishing, manual smoke checklist, diagnostics) lives in
-[docs/development.md](docs/development.md).
+[docs/development.md](docs/development.md) (in Russian).
 
 ## Commands
 
@@ -117,13 +133,13 @@ package.json    extension manifest (commands, views, settings)
 
 | Document | Contents |
 |----------|----------|
-| [docs/development.md](docs/development.md) | Dev workflow, tests, packaging, publishing |
+| [docs/development.md](docs/development.md) | Dev workflow, tests, packaging, publishing (in Russian) |
 
 ## Contributing
 
-Bug reports and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
-Security issues: [SECURITY.md](SECURITY.md). Changes are tracked in
-[CHANGELOG.md](CHANGELOG.md).
+Bug reports and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). This project
+follows the [Code of Conduct](CODE_OF_CONDUCT.md). Security issues: [SECURITY.md](SECURITY.md).
+Changes are tracked in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 

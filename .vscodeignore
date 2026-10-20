@@ -13,17 +13,14 @@ test/**
 docs/**
 .vscode/**
 .github/**
-.gitlab/**
 
-# CI pnpm store lives in-tree ($CI_PROJECT_DIR/.pnpm-store) so GitLab can cache it;
-# it must never be packed into the .vsix.
+# An in-tree pnpm store (if one is configured) must never be packed into the .vsix.
 .pnpm-store/**
 
 # Build / tooling config (not needed at runtime)
 esbuild.js
 vitest.config.ts
 tsconfig.json
-.gitlab-ci.yml
 .gitignore
 .vscodeignore
 .editorconfig

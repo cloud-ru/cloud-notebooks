@@ -1,5 +1,5 @@
 // Maps the console UI API notebook DTO to our view model. Pure (no `vscode`) → unit-testable.
-// Field shape mirrors env-jupyter-server's `NotebookResponse` (console.cloud.ru/aicloud/ui).
+// Field shape mirrors the notebook DTO returned by the console UI API (console.cloud.ru/aicloud/ui).
 import type { NotebookBucket, NotebookHandlerResponse, NotebookStatus } from "../api/types";
 
 export interface ConsoleNotebook {

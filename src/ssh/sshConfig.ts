@@ -550,7 +550,7 @@ export class SshConfig {
           "и id аккаунта («-i <key>» игнорируется, используется выбранный вами файл ключа). Можно ввести " +
           "только id аккаунта, чтобы использовать хост по умолчанию.",
         placeHolder:
-          "ssh name.ai0001011-00055@ssh-jupyter.ai.cloud.ru -p 2222   ·   или просто  ai0001011-00055",
+          "ssh name.ai0000000-00000@ssh-jupyter.ai.cloud.ru -p 2222   ·   или просто  ai0000000-00000",
         ignoreFocusOut: true,
       })
     )?.trim();
@@ -569,7 +569,7 @@ export class SshConfig {
 
     if (!/^[A-Za-z]+\d+-\d+$/.test(input)) {
       void vscode.window.showErrorMessage(
-        "Не удалось прочитать id аккаунта. Вставьте полную SSH-команду или только id (например, ai0001011-00055).",
+        "Не удалось прочитать id аккаунта. Вставьте полную SSH-команду или только id (например, ai0000000-00000).",
       );
       return undefined;
     }

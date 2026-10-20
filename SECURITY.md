@@ -8,8 +8,10 @@ Security fixes are applied to the latest release on `main` and to the most recen
 
 **Please do not report security vulnerabilities through public GitHub issues.**
 
-Use [GitHub's private vulnerability reporting](https://docs.github.com/en/code-security/security-advisories/guidance-on-reporting-and-writing-information-about-vulnerabilities/private-reporting-a-vulnerability)
-for this repository, or contact the maintainers through Cloud.ru's official channels.
+Use [GitHub's private vulnerability reporting](https://github.com/cloud-ru/cloud-notebooks/security/advisories/new)
+for this repository ([how it works](https://docs.github.com/en/code-security/security-advisories/guidance-on-reporting-and-writing-information-about-vulnerabilities/privately-reporting-a-security-vulnerability)).
+If that is not possible, email [opensource@cloud.ru](mailto:opensource@cloud.ru) with the subject
+"Security: cloud-notebooks".
 
 Include as much of the following as you can:
 

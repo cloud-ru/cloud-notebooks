@@ -5,8 +5,8 @@
 //      = the console SSH-config endpoint (its `region_type` taken from the notebook, see
 //      `regionTypeFromNotebookUrl`), server name = the notebook name.
 //   2. Parse the command from the console's "Подключение по SSH" dialog (manual override / recovery):
-//        ssh hardcore-spence.ai0010001-00354@sr008-nb.stage.ai.internal.cloud.ru -p 2222 -i <key>
-//             └── server name ──┘ └─ account id ─┘ └──────── gateway host ────────┘
+//        ssh my-notebook-server.ai0000000-00000@ssh-jupyter.ai.cloud.ru -p 2222 -i <key>
+//            └─ server name ──┘ └─ account id ┘ └──── gateway host ───┘
 
 export interface ParsedSshCommand {
   host: string;

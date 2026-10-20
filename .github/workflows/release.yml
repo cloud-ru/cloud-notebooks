@@ -53,22 +53,28 @@ jobs:
             exit 1
           fi
           tag="v${version}"
-          previous_version="$(git show "${BEFORE_SHA}:package.json" | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).version')"
-          if [[ "${version}" == "${previous_version}" ]]; then
-            echo "publish=false" >> "${GITHUB_OUTPUT}"
-            echo "Package version unchanged (${version}); no release"
-            exit 0
+          # The first push to a new repository (or a force-push) has no previous `main` commit in the
+          # fetched history: release the current version instead of failing on `git show`.
+          if git cat-file -e "${BEFORE_SHA}^{commit}" 2>/dev/null; then
+            previous_version="$(git show "${BEFORE_SHA}:package.json" | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).version')"
+            if [[ "${version}" == "${previous_version}" ]]; then
+              echo "publish=false" >> "${GITHUB_OUTPUT}"
+              echo "Package version unchanged (${version}); no release"
+              exit 0
+            fi
+            node -e '
+              const current = process.argv[1].split(".").map(Number);
+              const previous = process.argv[2].split(".").map(Number);
+              for (let i = 0; i < 3; i++) {
+                if (current[i] > previous[i]) process.exit(0);
+                if (current[i] < previous[i]) break;
+              }
+              console.error(`Version must increase: ${process.argv[2]} -> ${process.argv[1]}`);
+              process.exit(1);
+            ' "${version}" "${previous_version}"
+          else
+            echo "Previous commit ${BEFORE_SHA} is not in history; releasing ${version}"
           fi
-          node -e '
-            const current = process.argv[1].split(".").map(Number);
-            const previous = process.argv[2].split(".").map(Number);
-            for (let i = 0; i < 3; i++) {
-              if (current[i] > previous[i]) process.exit(0);
-              if (current[i] < previous[i]) break;
-            }
-            console.error(`Version must increase: ${process.argv[2]} -> ${process.argv[1]}`);
-            process.exit(1);
-          ' "${version}" "${previous_version}"
           echo "publish=true" >> "${GITHUB_OUTPUT}"
           echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
           echo "vsix=$(node -p "const p = require('./package.json'); p.name + '-' + p.version + '.vsix'")" >> "${GITHUB_OUTPUT}"

@@ -16,8 +16,7 @@ export interface NotebookLocation {
 
 /**
  * Absolute form of a `notebook.url` in either backend format: a legacy `http(s)://` URL is kept as is,
- * a bare host gets `https://` and a single trailing slash (same rule as the console's
- * `buildNotebookConnectUrl`).
+ * a bare host gets `https://` and a single trailing slash.
  */
 export function toAbsoluteNotebookUrl(url: string): string {
   const trimmed = url.trim();

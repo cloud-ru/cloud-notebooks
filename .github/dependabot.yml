@@ -1,0 +1,29 @@
+version: 2
+updates:
+  # npm works with pnpm-lock.yaml at the repository root.
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    ignore:
+      # @types/vscode must never be bumped automatically: vsce refuses to package
+      # when it is newer than engines.vscode, so it is updated manually together
+      # with engines.vscode in package.json.
+      - dependency-name: "@types/vscode"
+      # The extension runtime is Node 22, so a major @types/node bump must be a
+      # deliberate decision made alongside the runtime version; minor and patch
+      # updates are still proposed automatically.
+      - dependency-name: "@types/node"
+        update-types:
+          - "version-update:semver-major"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "ci"

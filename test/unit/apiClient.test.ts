@@ -46,14 +46,14 @@ describe("ConsoleApiClient.listWorkspaces", () => {
   it("GETs /user/v1/workspaces/ without x-workspace-id and returns the flat list", async () => {
     const captured: Captured[] = [];
     const client = makeClient(
-      [{ workspace_id: "w1", workspace_name: "mls-team", namespace: "ns-1", project_name: "Dev" }],
+      [{ workspace_id: "w1", workspace_name: "team-a", namespace: "ns-1", project_name: "Dev" }],
       captured,
     );
 
     const out = await client.listWorkspaces();
 
     expect(out).toEqual([
-      { workspace_id: "w1", workspace_name: "mls-team", namespace: "ns-1", project_name: "Dev" },
+      { workspace_id: "w1", workspace_name: "team-a", namespace: "ns-1", project_name: "Dev" },
     ]);
     expect(captured[0]?.url).toBe("https://console.cloud.ru/aicloud/ui/user/v1/workspaces/");
     expect(captured[0]?.headers["Authorization"]).toBe("Bearer tok");

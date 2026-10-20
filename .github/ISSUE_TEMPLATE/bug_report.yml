@@ -1,0 +1,90 @@
+name: Bug report
+description: Report a reproducible problem with the extension
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug.
+
+        **Do not report security vulnerabilities here.** Follow [SECURITY.md](https://github.com/cloud-ru/cloud-notebooks/blob/main/SECURITY.md) and use [private vulnerability reporting](https://github.com/cloud-ru/cloud-notebooks/security/advisories/new) instead.
+
+        Never paste bearer tokens, cookies, private keys, or workspace/account identifiers. Redact anything sensitive before posting.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the actual behavior and how often it occurs.
+    validations:
+      required: true
+  - type: textarea
+    id: steps-to-reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Provide the smallest sequence of steps that triggers the problem.
+      placeholder: |
+        1. Open the notebook ...
+        2. Run the command ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen instead?
+    validations:
+      required: true
+  - type: input
+    id: extension-version
+    attributes:
+      label: Extension version
+      description: Shown in the Extensions view next to the extension name.
+      placeholder: 0.1.2
+    validations:
+      required: true
+  - type: input
+    id: editor-version
+    attributes:
+      label: Editor version
+      description: From Help → About (or the equivalent menu in your editor).
+      placeholder: VS Code 1.105.0
+    validations:
+      required: true
+  - type: dropdown
+    id: editor
+    attributes:
+      label: Editor
+      options:
+        - VS Code
+        - Cursor
+        - VSCodium
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: operating-system
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Windows
+        - Linux
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant lines from Output → Cloud.ru Distributed Train. Secrets are redacted automatically, but review before posting.
+      render: text
+    validations:
+      required: false
+  - type: checkboxes
+    id: redaction
+    attributes:
+      label: Redaction
+      options:
+        - label: I removed tokens, cookies, private keys and account/workspace identifiers from everything I posted.
+          required: true

@@ -24,8 +24,8 @@ describe("parseNotebookUrl", () => {
   });
 
   it("accepts the new host-only format and mounts the server at the root", () => {
-    const loc = parseNotebookUrl("fervent-shannon-95b2e0cf.sr004-nb.ai.cloud.ru");
-    expect(loc.origin).toBe("https://fervent-shannon-95b2e0cf.sr004-nb.ai.cloud.ru");
+    const loc = parseNotebookUrl("my-notebook-0a1b2c3d.sr004-nb.ai.cloud.ru");
+    expect(loc.origin).toBe("https://my-notebook-0a1b2c3d.sr004-nb.ai.cloud.ru");
     expect(loc.prefix).toBe("/");
     expect(labPath(loc.prefix)).toBe("/lab");
   });
