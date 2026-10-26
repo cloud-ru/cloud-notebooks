@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `SECURITY.md` now documents this local trust boundary and names e-mail as the primary channel for
   reporting vulnerabilities.
 
+### Changed
+
+- Dependencies refreshed: puppeteer-core 25 (drops the vulnerable but unused `extract-zip`,
+  `proxy-agent` and `zod@3` subtree), follow-redirects 1.16.2, TypeScript 7 and esbuild 0.28.
+  puppeteer-core 25 is ESM-only, so the extension now loads it lazily with `import()` on the first
+  sign-in or token refresh instead of at activation.
+
 ## [0.1.2] - 2026-10-16
 
 ### Added

@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as vscode from "vscode";
-import puppeteer from "puppeteer-core";
+import type { Browser, PuppeteerNode } from "puppeteer-core" with { "resolution-mode": "import" };
 import { isJwtExpired, JWT_EXPIRY_SKEW_MS, jwtAccountFingerprint, jwtExpiryMs } from "../auth/jwt";
 import { findChrome } from "../jupyter/chrome";
 import type { Logger } from "../util/logger";
@@ -22,6 +22,11 @@ const KEEP_ALIVE_RETRY_MS = [60_000, 2 * 60_000, 5 * 60_000];
 /** Keep-alive pauses after this long without user activity in the window, so a machine left unattended
  * with VS Code open still lets the IdP idle timeout end the session. */
 const KEEP_ALIVE_IDLE_LIMIT_MS = 8 * 60 * 60_000;
+
+/** Loaded on the first mint, then reused: puppeteer-core ≥ 25 is ESM-only and the extension bundle is
+ * CommonJS with puppeteer-core left external, so a static import would become require(esm). A real
+ * import() avoids relying on that; the type import above needs `resolution-mode` for the same reason. */
+let puppeteer: PuppeteerNode | undefined;
 
 interface CdpCookie {
   name: string;
@@ -339,9 +344,10 @@ export class ConsoleTokenProvider {
       this.cookieStoreReset = true;
       this.deps.logger.info("Sign-in profile switched to the OS secret store; cookies saved under the fixed key were deleted.");
     }
-    if (signal.aborted || generation !== this.generation) return undefined;
-    let browser: Awaited<ReturnType<typeof puppeteer.launch>>;
+    let browser: Browser;
     try {
+      puppeteer ??= (await import("puppeteer-core")).default;
+      if (signal.aborted || generation !== this.generation) return undefined;
       browser = await puppeteer.launch({
         headless: !interactive,
         executablePath: chromePath,
@@ -360,7 +366,7 @@ export class ConsoleTokenProvider {
     try {
       if (signal.aborted || generation !== this.generation) return undefined;
       const page = (await browser.pages())[0] ?? (await browser.newPage());
-      const client = await page.target().createCDPSession();
+      const client = await page.createCDPSession();
       try {
         await page.goto(consoleUrl, { waitUntil: "domcontentloaded" });
       } catch (error) {

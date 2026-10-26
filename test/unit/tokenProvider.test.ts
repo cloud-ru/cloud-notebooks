@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 // tokenProvider imports `vscode` (an ambient host API, not an npm package) and `puppeteer-core`.
 // Shim both so the expiry FSM can be exercised without a real editor host or browser launch.
@@ -70,6 +70,20 @@ beforeEach(() => {
 });
 afterEach(() => fs.rmSync(profile.dir, { recursive: true, force: true }));
 
+// The provider imports puppeteer-core on its first mint and keeps it. Under vitest that import resolves
+// over the worker RPC, a real macrotask that fake timers and microtask flushes never wait for, so take
+// the first mint here, before any test counts launches.
+beforeAll(async () => {
+  profile.dir = fs.mkdtempSync(path.join(os.tmpdir(), "cloudru-profile-"));
+  findChrome.mockReturnValueOnce("/fake/chrome");
+  launch.mockRejectedValueOnce(new Error("warm-up"));
+  const provider = makeProvider(true);
+  await expect(provider.getAccessToken()).rejects.toThrow("warm-up");
+  provider.dispose();
+  fs.rmSync(profile.dir, { recursive: true, force: true });
+  launch.mockReset();
+});
+
 function makeProvider(initialSignedIn: boolean) {
   return makeProviderWithStore(initialSignedIn).provider;
 }
@@ -134,9 +148,9 @@ describe("ConsoleTokenProvider expired session", () => {
     const browser = {
       close,
       pages: async () => [{
-        target: () => ({ createCDPSession: async () => ({ send: async () => ({ cookies: [{
+        createCDPSession: async () => ({ send: async () => ({ cookies: [{
           name: "iframe_auth_cookie", value: token, domain: "console.cloud.ru",
-        }] }) }) }),
+        }] }) }),
         goto: async () => {},
       }],
     };
@@ -171,7 +185,7 @@ function fakeBrowserWithCookies(cookies: () => FakeCookie[]) {
   return {
     close: vi.fn(async () => {}),
     pages: async () => [{
-      target: () => ({ createCDPSession: async () => ({ send: async () => ({ cookies: cookies() }) }) }),
+      createCDPSession: async () => ({ send: async () => ({ cookies: cookies() }) }),
       goto: async () => {},
     }],
   };

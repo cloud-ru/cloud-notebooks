@@ -344,17 +344,17 @@
   },
   "dependencies": {
     "http-proxy": "^1.18.1",
-    "puppeteer-core": "^22.15.0",
+    "puppeteer-core": "^25.14.0",
     "ssh2": "^1.15.0"
   },
   "devDependencies": {
     "@types/http-proxy": "^1.17.14",
-    "@types/node": "^20.14.0",
-    "@types/ssh2": "^1.15.0",
+    "@types/node": "^20.19.43",
+    "@types/ssh2": "^1.15.6",
     "@types/vscode": "^1.90.0",
     "@vscode/jupyter-extension": "^1.1.1",
-    "esbuild": "^0.21.5",
-    "typescript": "^5.4.5",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
     "vitest": "^1.6.0"
   },
   "pnpm": {
