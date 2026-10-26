@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- The local proxies for the notebook webview and the remote kernel now require a per-session secret
+  and reject requests with a foreign `Host` or `Origin` or cross-site fetch metadata, and the
+  unauthenticated raw SSH port-forwards are gone. Previously any web page or local process that found
+  the random port could reach the pod's JupyterLab API without credentials.
+- `SECURITY.md` now documents this local trust boundary and names e-mail as the primary channel for
+  reporting vulnerabilities.
+
 ## [0.1.2] - 2026-10-16
 
 ### Added

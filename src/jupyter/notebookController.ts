@@ -8,13 +8,16 @@ import { labPath, parseNotebookUrl } from "./notebookUrl";
 import { openNotebookPanel } from "./notebookPanel";
 import { NotebookShim } from "./shim";
 import { probeHttpAlive } from "./httpProbe";
+import { createSshTunnelAgent } from "./sshAgent";
 
 const POD_JUPYTER_PORT = 8888;
 
 /**
- * "Open the notebook UI inside VS Code": tunnel to the pod's tokenless JupyterLab (127.0.0.1:8888)
- * over SSH — the same proven path the remote kernel uses — and frame it in a webview through a local
- * shim that strips X-Frame-Options / CSP frame-ancestors. No OIDC proxy, no cookie capture.
+ * "Open the notebook UI inside VS Code": reach the pod's tokenless JupyterLab (127.0.0.1:8888) over
+ * in-process SSH channels — the same path the remote kernel uses — and frame it in a webview through
+ * a local shim that demands its per-instance secret (bootstrapped by the iframe src into a cookie)
+ * and strips X-Frame-Options / CSP frame-ancestors. No OIDC proxy, no cookie capture, no raw
+ * local port-forward.
  */
 export class NotebookViewController {
   private readonly connections = new Map<string, SshConnection>(); // by notebook uid
@@ -55,11 +58,14 @@ export class NotebookViewController {
     // asExternalUri: the sanctioned way to frame a local server in a webview (works in forks/remote).
     const external = await vscode.env.asExternalUri(vscode.Uri.parse(localUrl));
     if (!this.isCurrent(notebook.uid, generation, version)) return;
-    this.deps.logger.info(`Opening notebook webview: shim=${entry.shim.baseUrl} frame=${external.toString()}`);
+    const frame = external.toString();
+    this.deps.logger.info(`Opening notebook webview: shim=${entry.shim.baseUrl} frame=${frame}`);
+    // The bootstrap secret goes onto the src only after logging, so the output channel never holds it.
+    const frameSrc = `${frame}${frame.includes("?") ? "&" : "?"}${entry.shim.bootstrapQuery}`;
 
     const panel = openNotebookPanel({
       title: notebook.name,
-      frameSrc: external.toString(),
+      frameSrc,
       frameOrigin: `${external.scheme}://${external.authority}`,
       existing: this.panels.get(notebook.uid),
       onRetry: () => {
@@ -99,7 +105,7 @@ export class NotebookViewController {
     if (existing) {
       // Reuse only if the shim still reaches a live pod; a pause→resume leaves it wired to a dead
       // tunnel, which otherwise renders as a webview that spins forever.
-      if (await probeHttpAlive(`${existing.shim.baseUrl}${existing.appPath}`)) {
+      if (await probeHttpAlive(`${existing.shim.baseUrl}${existing.appPath}`, { headers: existing.shim.authHeaders })) {
         return this.isCurrent(notebook.uid, generation, version) ? existing : undefined;
       }
       if (!this.isCurrent(notebook.uid, generation, version)) return undefined;
@@ -113,31 +119,25 @@ export class NotebookViewController {
     if (!target || !this.isCurrent(notebook.uid, generation, version)) return undefined;
     const connection = this.connections.get(notebook.uid) ?? new SshConnection(target);
     this.connections.set(notebook.uid, connection);
+    let shim: NotebookShim | undefined;
     try {
       const { prefix } = parseNotebookUrl(notebook.url ?? "");
-      const localPort = await vscode.window.withProgress(
+      // Only the SSH handshake is awaited up front, so auth/host-key/network failures surface with
+      // their own message; whether the pod's port answers is the app-path probe's job.
+      await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: `Подключение к «${notebook.name}»…` },
-        () =>
-          connection.forward("127.0.0.1", POD_JUPYTER_PORT, (err) =>
-            {
-              this.deps.logger.error(`Notebook tunnel error for ${notebook.name}`, err);
-              void this.panels.get(notebook.uid)?.webview.postMessage({ type: "disconnected" });
-            },
-          ),
+        () => connection.ready(),
       );
       if (!this.isCurrent(notebook.uid, generation, version)) {
         connection.dispose();
         return undefined;
       }
-      // Jupyter serves its UI under base_url=<prefix> (".../lab"); other app images (marimo, vscode, …)
-      // serve from "/". Probe the pod to pick the path that actually returns a UI — no per-type guessing.
-      const appPath = await this.probeAppPath(localPort, [labPath(prefix), "/"]);
-      if (!this.isCurrent(notebook.uid, generation, version)) {
-        connection.dispose();
-        return undefined;
-      }
-      const shim = new NotebookShim({
-        origin: `http://127.0.0.1:${localPort}`,
+      // No local port-forward: the shim and the probe reach pod:8888 over in-process ssh2 channels, so
+      // the only local listener is the shim, which rejects anything without its secret.
+      const agent = createSshTunnelAgent(() => connection.openStream("127.0.0.1", POD_JUPYTER_PORT));
+      shim = new NotebookShim({
+        upstream: `http://127.0.0.1:${POD_JUPYTER_PORT}`,
+        agent,
         onError: (err) => {
           this.deps.logger.error(`Notebook shim error for ${notebook.name}`, err);
           void this.panels.get(notebook.uid)?.webview.postMessage({ type: "disconnected" });
@@ -150,10 +150,19 @@ export class NotebookViewController {
         connection.dispose();
         return undefined;
       }
+      // Jupyter serves its UI under base_url=<prefix> (".../lab"); other app images (marimo, vscode, …)
+      // serve from "/". Probe the pod to pick the path that actually returns a UI — no per-type guessing.
+      const appPath = await this.probeAppPath(agent, [labPath(prefix), "/"]);
+      if (!this.isCurrent(notebook.uid, generation, version)) {
+        shim.dispose();
+        connection.dispose();
+        return undefined;
+      }
       const entry = { shim, appPath };
       this.shims.set(notebook.uid, entry);
       return entry;
     } catch (err) {
+      shim?.dispose();
       connection.dispose();
       if (this.connections.get(notebook.uid) === connection) this.connections.delete(notebook.uid);
       if (!this.isCurrent(notebook.uid, generation, version)) return undefined;
@@ -164,9 +173,9 @@ export class NotebookViewController {
   }
 
   /** Pick the first candidate path that returns a usable HTTP response (2xx/3xx) from the pod. */
-  private async probeAppPath(localPort: number, candidates: string[]): Promise<string> {
+  private async probeAppPath(agent: http.Agent, candidates: string[]): Promise<string> {
     for (const path of candidates) {
-      if (await probeHttp(localPort, path)) {
+      if (await probeHttp(agent, path)) {
         this.deps.logger.info(`Notebook app path resolved to "${path}"`);
         return path;
       }
@@ -206,15 +215,15 @@ export class NotebookViewController {
   }
 }
 
-/** GET the path through the local tunnel; true if the pod returns a usable HTTP response (2xx/3xx). */
-function probeHttp(localPort: number, path: string, timeoutMs = 6000): Promise<boolean> {
+/** GET the path on the pod through an SSH channel; true if it returns a usable HTTP response (2xx/3xx). */
+function probeHttp(agent: http.Agent, path: string, timeoutMs = 6000): Promise<boolean> {
   const { promise, resolve } = Promise.withResolvers<boolean>();
-  const req = http.get({ host: "127.0.0.1", port: localPort, path, timeout: timeoutMs }, (res) => {
+  const req = http.get({ agent, host: "127.0.0.1", port: POD_JUPYTER_PORT, path, timeout: timeoutMs }, (res) => {
     const status = res.statusCode ?? 0;
     res.resume(); // drain
     resolve(status >= 200 && status < 400);
   });
-  req.on("error", () => resolve(false)); // parse error / connection reset → not this path
+  req.on("error", () => resolve(false)); // channel open failure / parse error / reset → not this path
   req.on("timeout", () => {
     req.destroy();
     resolve(false);

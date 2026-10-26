@@ -39,7 +39,7 @@ export function scrubSecrets(text: string): string {
   return text
     .replace(/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/gi, "<private key redacted>")
     .replace(/(Bearer\s+)[A-Za-z0-9._-]+/gi, "$1<redacted>")
-    .replace(/([?&](?:access_token|refresh_token|token|client_secret|code|session|password|x-api-key)=)[^&#\s]+/gi, "$1<redacted>")
+    .replace(/([?&](?:access_token|refresh_token|token|cloudru_shim|client_secret|code|session|password|x-api-key)=)[^&#\s]+/gi, "$1<redacted>")
     .replace(/(\b(?:Authorization|Cookie|Set-Cookie)\s*[:=]\s*)[^\r\n]+/gi, "$1<redacted>")
     .replace(/("?(?:client_secret|x-api-key|access_token|refresh_token|password)"?\s*[:=]\s*)("?)[^",}\s]+\2/gi, "$1$2<redacted>$2");
 }

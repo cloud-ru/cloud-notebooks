@@ -7,6 +7,7 @@ vi.mock("ssh2", () => ({
     connect = vi.fn(() => { clients.push(this); return this; });
     sftp = vi.fn((callback: (error: unknown, channel?: unknown) => void) => callback(undefined, { end: vi.fn() }));
     exec = vi.fn();
+    forwardOut = vi.fn();
     end = vi.fn(() => this);
     destroy = vi.fn(() => this);
   },
@@ -41,17 +42,83 @@ describe("SshConnection lifetime", () => {
     connection.dispose();
   });
 
-  it("rejects a forward disposed before its listen callback fires", async () => {
+  it("opens an in-process channel to the requested pod address", async () => {
     clients.length = 0;
     const connection = new SshConnection({ host: "gateway", port: 2222, username: "nb.account", privateKey: Buffer.from("key") });
-    const pending = connection.forward("127.0.0.1", 8888);
-    const client = clients[0] as EventEmitter;
+    const opening = connection.openStream("127.0.0.1", 8888);
+    const client = clients[0] as EventEmitter & { forwardOut: ReturnType<typeof vi.fn> };
     client.emit("ready");
-    // Drain only microtask turns: the forward continuation advances to server.listen(), while the
-    // 'listening' event (queued via nextTick) stays pending — exactly the dispose() race window.
-    for (let i = 0; i < 10; i++) await Promise.resolve();
+    await vi.waitFor(() => expect(client.forwardOut).toHaveBeenCalledTimes(1));
+    const channel = Object.assign(new EventEmitter(), { destroy: vi.fn() });
+    const [srcHost, srcPort, dstHost, dstPort, callback] = client.forwardOut.mock.calls[0] as [string, number, string, number, (error: Error | undefined, channel?: unknown) => void];
+    expect([srcHost, srcPort, dstHost, dstPort]).toEqual(["127.0.0.1", 0, "127.0.0.1", 8888]);
+    callback(undefined, channel);
+    await expect(opening).resolves.toBe(channel);
+    expect(channel.destroy).not.toHaveBeenCalled();
     connection.dispose();
-    await expect(pending).rejects.toThrow(/SSH connection was closed/);
+  });
+
+  it("rejects and destroys a channel that arrives after dispose", async () => {
+    clients.length = 0;
+    const connection = new SshConnection({ host: "gateway", port: 2222, username: "nb.account", privateKey: Buffer.from("key") });
+    const opening = connection.openStream("127.0.0.1", 8888);
+    const client = clients[0] as EventEmitter & { forwardOut: ReturnType<typeof vi.fn> };
+    client.emit("ready");
+    await vi.waitFor(() => expect(client.forwardOut).toHaveBeenCalledTimes(1));
+    connection.dispose();
+    const channel = Object.assign(new EventEmitter(), { destroy: vi.fn() });
+    const callback = client.forwardOut.mock.calls[0]?.[4] as (error: Error | undefined, channel?: unknown) => void;
+    callback(undefined, channel);
+    await expect(opening).rejects.toThrow(/SSH connection was closed/);
+    expect(channel.destroy).toHaveBeenCalled();
+  });
+
+  it("destroys channels it handed out when disposed", async () => {
+    clients.length = 0;
+    const connection = new SshConnection({ host: "gateway", port: 2222, username: "nb.account", privateKey: Buffer.from("key") });
+    const opening = connection.openStream("127.0.0.1", 8888);
+    const client = clients[0] as EventEmitter & { forwardOut: ReturnType<typeof vi.fn> };
+    client.emit("ready");
+    await vi.waitFor(() => expect(client.forwardOut).toHaveBeenCalledTimes(1));
+    const channel = Object.assign(new EventEmitter(), { destroy: vi.fn() });
+    const callback = client.forwardOut.mock.calls[0]?.[4] as (error: Error | undefined, channel?: unknown) => void;
+    callback(undefined, channel);
+    await expect(opening).resolves.toBe(channel);
+    connection.dispose();
+    expect(channel.destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects openStream with the channel open error", async () => {
+    clients.length = 0;
+    const connection = new SshConnection({ host: "gateway", port: 2222, username: "nb.account", privateKey: Buffer.from("key") });
+    const opening = connection.openStream("127.0.0.1", 8888);
+    const client = clients[0] as EventEmitter & { forwardOut: ReturnType<typeof vi.fn> };
+    client.emit("ready");
+    await vi.waitFor(() => expect(client.forwardOut).toHaveBeenCalledTimes(1));
+    const callback = client.forwardOut.mock.calls[0]?.[4] as (error: Error | undefined, channel?: unknown) => void;
+    callback(new Error("open failed: connection refused"));
+    await expect(opening).rejects.toThrow("open failed: connection refused");
+    connection.dispose();
+  });
+
+  it("resolves ready() once the handshake completes", async () => {
+    clients.length = 0;
+    const connection = new SshConnection({ host: "gateway", port: 2222, username: "nb.account", privateKey: Buffer.from("key") });
+    const handshake = connection.ready();
+    (clients[0] as EventEmitter).emit("ready");
+    await expect(handshake).resolves.toBeUndefined();
+    connection.dispose();
+  });
+
+  it("rejects ready() when disposed before the handshake completes", async () => {
+    clients.length = 0;
+    const connection = new SshConnection({ host: "gateway", port: 2222, username: "nb.account", privateKey: Buffer.from("key") });
+    const handshake = connection.ready();
+    const client = clients[0] as EventEmitter & { destroy: ReturnType<typeof vi.fn> };
+    connection.dispose();
+    client.emit("ready");
+    await expect(handshake).rejects.toThrow(/SSH connection was closed/);
+    expect(client.destroy).toHaveBeenCalled();
   });
 
   it("cancels an exec before SSH authentication becomes ready", async () => {

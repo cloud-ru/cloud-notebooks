@@ -1,6 +1,5 @@
-import * as net from "node:net";
 import { Client } from "ssh2";
-import type { ConnectConfig, SFTPWrapper, VerifyCallback } from "ssh2";
+import type { ClientChannel, ConnectConfig, SFTPWrapper, VerifyCallback } from "ssh2";
 
 export interface SshConnectionConfig {
   host: string;
@@ -19,9 +18,10 @@ export interface ExecResult {
 const EXEC_DEADLINE_MS = 120_000;
 
 /**
- * One SSH client to a notebook's gateway, shared by the SFTP file browser and the local port forward
- * used to reach the pod's Jupyter kernel. Connects lazily and clears its cached promises on close so
- * the next use reconnects. Offers `ssh-rsa` for the older keys cloud.ru issues.
+ * One SSH client to a notebook's gateway, shared by the SFTP file browser and the in-process
+ * `direct-tcpip` channels that the local Jupyter proxies (`NotebookShim`) use to reach the pod.
+ * Connects lazily and clears its cached promises on close so the next use reconnects. Offers
+ * `ssh-rsa` for the older keys cloud.ru issues.
  */
 export class SshConnection {
   private clientPromise: Promise<Client> | undefined;
@@ -29,11 +29,8 @@ export class SshConnection {
   private connectingClient: Client | undefined;
   private rejectConnect: ((error: Error) => void) | undefined;
   private disposed = false;
-  private readonly forwardServers: net.Server[] = [];
-  /** Live tunnel sockets per forward server, destroyed on dispose (kernel sockets are long-lived). */
-  private readonly forwardSockets = new Map<net.Server, Set<net.Socket>>();
-  /** Forwards still waiting for their listen callback; dispose() must reject them or they hang forever. */
-  private readonly pendingForwards = new Map<net.Server, (error: Error) => void>();
+  /** Channels handed out by openStream(); destroyed on dispose (kernel WebSockets are long-lived). */
+  private readonly channels = new Set<ClientChannel>();
 
   constructor(private readonly config: SshConnectionConfig) {}
 
@@ -49,45 +46,39 @@ export class SshConnection {
     return this.sftpPromise;
   }
 
+  /** Resolves once the SSH handshake completed (connects on demand); surfaces auth/host-key/network errors up front. */
+  async ready(): Promise<void> {
+    await this.getClient();
+    if (this.disposed) throw new Error("SSH connection was closed");
+  }
+
   /**
-   * Open a local TCP forward (`ssh -L`) to `remoteHost:remotePort` on the pod and return the local
-   * port. Used to reach the pod's tokenless JupyterLab (127.0.0.1:8888) directly, bypassing the proxy.
-   * `onError` surfaces per-connection/channel failures (e.g. WebSocket) for diagnostics.
+   * Open a `direct-tcpip` channel to `remoteHost:remotePort` on the pod. The channel stays in-process
+   * (no local listener), so only callers holding this connection — the authenticated local proxies —
+   * can reach the pod's tokenless JupyterLab.
    */
-  async forward(remoteHost: string, remotePort: number, onError?: (error: Error) => void): Promise<number> {
+  async openStream(remoteHost: string, remotePort: number): Promise<ClientChannel> {
     const client = await this.getClient();
     if (this.disposed) throw new Error("SSH connection was closed");
-    const sockets = new Set<net.Socket>();
-    const server = net.createServer((socket) => {
-      sockets.add(socket);
-      socket.on("close", () => sockets.delete(socket));
-      socket.on("error", (err) => onError?.(err));
-      const srcPort = socket.remotePort ?? 0;
-      client.forwardOut(socket.remoteAddress ?? "127.0.0.1", srcPort, remoteHost, remotePort, (err, stream) => {
-        if (err) {
-          onError?.(err);
-          socket.destroy();
-          return;
-        }
-        stream.on("error", (streamErr: Error) => onError?.(streamErr));
-        socket.pipe(stream);
-        stream.pipe(socket);
-        socket.on("close", () => stream.end());
-        stream.on("close", () => socket.destroy());
-      });
+    const { promise, resolve, reject } = Promise.withResolvers<ClientChannel>();
+    client.forwardOut("127.0.0.1", 0, remoteHost, remotePort, (err, channel) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+      if (this.disposed) {
+        channel.on("error", () => undefined);
+        channel.destroy();
+        reject(new Error("SSH connection was closed"));
+        return;
+      }
+      this.channels.add(channel);
+      channel.once("close", () => this.channels.delete(channel));
+      resolve(channel);
     });
-    this.forwardServers.push(server);
-    this.forwardSockets.set(server, sockets);
-    const { promise, resolve, reject } = Promise.withResolvers<number>();
-    const settle = (complete: () => void) => {
-      this.pendingForwards.delete(server);
-      complete();
-    };
-    this.pendingForwards.set(server, reject);
-    server.once("error", (err) => settle(() => reject(err)));
-    server.listen(0, "127.0.0.1", () => settle(() => resolve((server.address() as net.AddressInfo).port)));
     return promise;
   }
+
   /**
    * Run a command on the pod and collect its output. `stdin` (when given) is written to the remote
    * process and closed — used to feed whole scripts to `sh -s` without shell-quoting them.
@@ -235,16 +226,8 @@ export class SshConnection {
     this.disposed = true;
     this.rejectConnect?.(new Error("SSH connection was closed"));
     this.connectingClient?.destroy();
-    // Live tunnel sockets keep plain server.close() waiting forever — destroy them first.
-    for (const sockets of this.forwardSockets.values()) {
-      for (const socket of sockets) socket.destroy();
-    }
-    this.forwardSockets.clear();
-    // A server closed before its listen callback never fires it — reject waiters here instead.
-    for (const reject of this.pendingForwards.values()) reject(new Error("SSH connection was closed"));
-    this.pendingForwards.clear();
-    for (const server of this.forwardServers) server.close();
-    this.forwardServers.length = 0;
+    for (const channel of this.channels) channel.destroy();
+    this.channels.clear();
     void this.clientPromise?.then((client) => client.destroy()).catch(() => undefined);
     this.clientPromise = undefined;
     this.sftpPromise = undefined;
