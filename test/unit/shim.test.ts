@@ -51,9 +51,9 @@ function newShim(): NotebookShim {
 }
 
 /** GET through the shim with exactly these headers (each case sets Host explicitly). */
-function get(path: string, headers: http.OutgoingHttpHeaders): Promise<Reply> {
+function get(path: string, headers: http.OutgoingHttpHeaders, target = port): Promise<Reply> {
   const { promise, resolve, reject } = Promise.withResolvers<Reply>();
-  const req = http.request({ host: "127.0.0.1", port, path, headers, agent: false }, (res) => {
+  const req = http.request({ host: "127.0.0.1", port: target, path, headers, agent: false }, (res) => {
     let body = "";
     res.setEncoding("utf8");
     res.on("data", (chunk: string) => (body += chunk));
@@ -281,5 +281,34 @@ describe("NotebookShim", () => {
     other.dispose();
     await ws.closed;
     await expect(connect(otherPort)).rejects.toMatchObject({ code: "ECONNREFUSED" });
+  });
+
+  it("answers 502 and closes the WebSocket when the SSH tunnel cannot be opened, without throwing", async () => {
+    // What the real agent does once the SSH session is gone: every upstream connect fails. The HTTP
+    // path must report 502; the upgrade path has no response object, so http-proxy's error must be
+    // routed to onError and end the client socket rather than surface as an uncaught exception.
+    const tunnelDown = new Error("SSH connection was closed");
+    const agent = new (class extends http.Agent {
+      override createConnection(_options: unknown, callback: (err: Error | null, socket?: Duplex) => void): undefined {
+        queueMicrotask(() => callback(tunnelDown));
+        return undefined;
+      }
+    })({ keepAlive: false });
+    const dead = new NotebookShim({ upstream: `http://127.0.0.1:${podPort}`, agent, onError, onTrace });
+    const deadPort = Number(new URL(await dead.start()).port);
+    onError.mockClear();
+    try {
+      const reply = await get("/api/status", { host: `127.0.0.1:${deadPort}`, authorization: `token ${dead.token}` }, deadPort);
+      expect(reply.status).toBe(502);
+      expect(onError).toHaveBeenCalledWith(tunnelDown);
+
+      onError.mockClear();
+      const ws = await upgrade(`/api/kernels/k3/channels?token=${dead.token}`, { Origin: `http://127.0.0.1:${deadPort}` }, deadPort);
+      await ws.closed;
+      expect(ws.received()).not.toContain("101");
+      expect(onError).toHaveBeenCalledWith(tunnelDown);
+    } finally {
+      dead.dispose();
+    }
   });
 });
